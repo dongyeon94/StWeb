@@ -3,11 +3,19 @@
 //
 //  portfolio.json (종목 설정) + data.json (GitHub Actions가 받아둔 시세)
 //  를 읽어 화면을 그립니다. 둘 다 같은 출처라 CORS 가 없습니다.
+//
+//  종목에 "group" 값을 주면 그룹별 탭으로 분리됩니다. (예: "월배당")
 // ============================================================
 
 const $ = (sel) => document.querySelector(sel);
 
+const DEFAULT_GROUP = "일반";   // group 이 없는 종목이 들어갈 기본 그룹
+const ALL_TAB = "전체";          // 모든 종목을 보여주는 탭
+
 let portfolioCache = null;
+let entries = [];      // [{ group, cardHtml, summaryRow|null }]
+let tabOrder = [];     // [ALL_TAB, ...그룹들]
+let currentTab = ALL_TAB;
 
 /* ---------- 숫자 포맷 ---------- */
 function fmtCurrency(value, currency) {
@@ -129,6 +137,44 @@ function renderSummary(rows) {
     .join("");
 }
 
+/* ---------- 탭 ---------- */
+function renderTabs() {
+  const count = (name) =>
+    name === ALL_TAB
+      ? entries.length
+      : entries.filter((e) => e.group === name).length;
+
+  $("#tabs").innerHTML = tabOrder
+    .map(
+      (name) => `<button type="button" class="tab" data-tab="${name}">
+        ${name}<span class="tab-count">${count(name)}</span></button>`
+    )
+    .join("");
+
+  $("#tabs")
+    .querySelectorAll(".tab")
+    .forEach((b) => b.addEventListener("click", () => selectTab(b.dataset.tab)));
+}
+
+function selectTab(name) {
+  currentTab = name;
+
+  $("#tabs")
+    .querySelectorAll(".tab")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+
+  const shown =
+    name === ALL_TAB ? entries : entries.filter((e) => e.group === name);
+
+  $("#grid").innerHTML = shown.length
+    ? shown.map((e) => e.cardHtml).join("")
+    : '<p class="empty-msg">이 탭에 표시할 종목이 없습니다.</p>';
+
+  $("#summary").innerHTML = renderSummary(
+    shown.map((e) => e.summaryRow).filter(Boolean)
+  );
+}
+
 /* ---------- 메인 ---------- */
 async function load() {
   const btn = $("#refresh");
@@ -146,28 +192,52 @@ async function load() {
     portfolioCache = portfolio;
     document.body.dataset.scheme = portfolio.colorScheme || "kr";
 
-    const cards = [];
-    const rows = [];
+    entries = [];
+    const groups = [];
 
     for (const h of portfolio.holdings) {
+      const group = h.group || DEFAULT_GROUP;
+      if (!groups.includes(group)) groups.push(group);
+
       const q = data.quotes?.[h.ticker];
       if (!q || q.error || typeof q.price !== "number") {
-        cards.push(renderError(h, q?.error || "데이터 없음"));
+        entries.push({
+          group,
+          cardHtml: renderError(h, q?.error || "데이터 없음"),
+          summaryRow: null,
+        });
         continue;
       }
       const c = computeQuote(h, q);
-      cards.push(renderCard(h, c));
-      rows.push({ currency: c.currency, value: c.value, cost: c.cost, pnl: c.pnl });
+      entries.push({
+        group,
+        cardHtml: renderCard(h, c),
+        summaryRow: { currency: c.currency, value: c.value, cost: c.cost, pnl: c.pnl },
+      });
     }
 
-    $("#grid").innerHTML = cards.join("");
-    $("#summary").innerHTML = renderSummary(rows);
+    // 그룹이 2개 이상일 때만 탭을 보여줍니다.
+    tabOrder = [ALL_TAB, ...groups];
+    if (!tabOrder.includes(currentTab)) currentTab = ALL_TAB;
+
+    if (groups.length > 1) {
+      renderTabs();
+      // URL 해시(#그룹명)로 특정 탭을 열 수 있음 — 북마크/링크 공유용
+      const hashTab = decodeURIComponent(location.hash.slice(1) || "");
+      if (hashTab && tabOrder.includes(hashTab)) currentTab = hashTab;
+    } else {
+      $("#tabs").innerHTML = "";
+      currentTab = ALL_TAB;
+    }
+    selectTab(currentTab);
 
     const upd = data.updatedAt
       ? new Date(data.updatedAt).toLocaleString("ko-KR")
       : "알 수 없음";
     status.textContent = `시세 기준 시각: ${upd}  (GitHub Actions가 주기적으로 갱신)`;
   } catch (e) {
+    $("#tabs").innerHTML = "";
+    $("#summary").innerHTML = "";
     $("#grid").innerHTML = `
       <article class="card card-error">
         <p class="err-msg">데이터를 불러오지 못했습니다<br>

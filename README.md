@@ -33,7 +33,8 @@ GitHub Actions (10분마다 + 수동 실행)
   "colorScheme": "kr",
   "holdings": [
     { "ticker": "005930.KS", "name": "삼성전자", "buyPrice": 70000, "quantity": 10 },
-    { "ticker": "AAPL",      "name": "Apple",    "buyPrice": 180,   "quantity": 5 }
+    { "ticker": "AAPL",      "name": "Apple",    "buyPrice": 180,   "quantity": 5 },
+    { "ticker": "O", "name": "리얼티인컴", "buyPrice": 55, "quantity": 10, "group": "월배당" }
   ]
 }
 ```
@@ -44,9 +45,18 @@ GitHub Actions (10분마다 + 수동 실행)
 | `name` | 화면에 표시할 이름 |
 | `buyPrice` | 내 평균 매수 단가 (한국 원화 / 미국 달러) |
 | `quantity` | 보유 수량 |
+| `group` | (선택) 종목을 묶을 그룹 이름. 같은 그룹끼리 **탭**으로 분리됨. 생략하면 `일반` |
 | `colorScheme` | `"kr"` 상승 빨강·하락 파랑 / `"us"` 상승 초록·하락 빨강 |
 
 > 손익 요약은 통화(원화/달러)별로 따로 합산됩니다.
+
+### 탭으로 그룹 나누기
+
+`group` 값이 서로 다른 종목이 2개 이상이면 화면 상단에 탭이 생깁니다.
+예를 들어 월배당 종목에 `"group": "월배당"`을 주면 `전체` · `일반` · `월배당`
+탭이 만들어지고, 각 탭은 그 그룹의 종목과 자산 요약만 보여줍니다.
+그룹이 하나뿐이면 탭은 표시되지 않습니다.
+특정 탭은 `주소/#월배당` 처럼 URL 해시로 바로 열 수 있습니다.
 
 ## 2. GitHub Pages 켜기
 
