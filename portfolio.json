@@ -1,5 +1,109 @@
 {
   "colorScheme": "kr",
+
+  "watchlist": [
+    { "kind": "통화", "ticker": "KRW=X",    "name": "USD/KRW" },
+    { "kind": "통화", "ticker": "JPYKRW=X", "name": "JPY/KRW (100엔)", "mul": 100 },
+    { "kind": "통화", "ticker": "EURKRW=X", "name": "EUR/KRW" },
+
+    { "kind": "지수", "ticker": "^GSPC", "name": "S&P 500" },
+    { "kind": "지수", "ticker": "^IXIC", "name": "나스닥 종합" },
+    { "kind": "지수", "ticker": "^SOX",  "name": "필라델피아 반도체 (SOX)" },
+    { "kind": "지수", "ticker": "^KS11", "name": "코스피" },
+    { "kind": "지수", "ticker": "^KQ11", "name": "코스닥" },
+
+    { "kind": "주식", "ticker": "005930.KS", "name": "삼성전자" },
+    { "kind": "주식", "ticker": "000660.KS", "name": "SK하이닉스" },
+    { "kind": "주식", "ticker": "005380.KS", "name": "현대차" },
+    { "kind": "주식", "ticker": "373220.KS", "name": "LG에너지솔루션" },
+    { "kind": "주식", "ticker": "035420.KS", "name": "NAVER" },
+    { "kind": "주식", "ticker": "MSFT",      "name": "마이크로소프트" },
+    { "kind": "주식", "ticker": "AAPL",      "name": "애플" },
+    { "kind": "주식", "ticker": "TSLA",      "name": "테슬라" },
+    { "kind": "주식", "ticker": "CRCL",      "name": "써클" },
+    { "kind": "주식", "ticker": "NVDA",      "name": "엔비디아" },
+
+    { "kind": "코인", "ticker": "BTC-USD", "name": "비트코인 (BTC/USD)" },
+    { "kind": "코인", "ticker": "ETH-USD", "name": "이더리움 (ETH/USD)" },
+    { "kind": "코인", "ticker": "SOL-USD", "name": "솔라나 (SOL/USD)" }
+  ],
+
+  "sectors": [
+    {
+      "name": "AI 반도체",
+      "items": [
+        { "cat": "미국 ETF",  "ticker": "SMH",       "name": "SMH" },
+        { "cat": "미국 종목", "ticker": "NVDA",      "name": "NVDA" },
+        { "cat": "한국 ETF",  "ticker": "471990.KS", "name": "KODEX AI반도체" },
+        { "cat": "한국 종목", "ticker": "005930.KS", "name": "삼성전자" },
+        { "cat": "한국 종목", "ticker": "000660.KS", "name": "SK하이닉스" }
+      ]
+    },
+    {
+      "name": "전력 인프라",
+      "items": [
+        { "cat": "미국 ETF",  "ticker": "XLU",       "name": "XLU" },
+        { "cat": "미국 종목", "ticker": "VRT",       "name": "VRT" },
+        { "cat": "미국 종목", "ticker": "GEV",       "name": "GEV" },
+        { "cat": "한국 종목", "ticker": "267260.KS", "name": "HD현대일렉트릭" }
+      ]
+    },
+    {
+      "name": "원전/SMR",
+      "items": [
+        { "cat": "미국 ETF",  "ticker": "URA",       "name": "URA" },
+        { "cat": "미국 ETF",  "ticker": "NLR",       "name": "NLR" },
+        { "cat": "미국 종목", "ticker": "CEG",       "name": "CEG" },
+        { "cat": "미국 종목", "ticker": "CCJ",       "name": "CCJ" },
+        { "cat": "한국 ETF",  "ticker": "0098F0.KS", "name": "KODEX K원자력SMR" },
+        { "cat": "한국 종목", "ticker": "034020.KS", "name": "두산에너빌리티" }
+      ]
+    },
+    {
+      "name": "우주/방산",
+      "items": [
+        { "cat": "미국 ETF",  "ticker": "ITA",       "name": "ITA" },
+        { "cat": "미국 ETF",  "ticker": "ARKX",      "name": "ARKX" },
+        { "cat": "미국 종목", "ticker": "LMT",       "name": "LMT" },
+        { "cat": "미국 종목", "ticker": "RKLB",      "name": "RKLB" },
+        { "cat": "한국 ETF",  "ticker": "463250.KS", "name": "TIGER K방산&우주" },
+        { "cat": "한국 종목", "ticker": "012450.KS", "name": "한화에어로스페이스" }
+      ]
+    },
+    {
+      "name": "로보틱스",
+      "items": [
+        { "cat": "미국 ETF",  "ticker": "BOTT",      "name": "BOTT" },
+        { "cat": "미국 ETF",  "ticker": "BOTZ",      "name": "BOTZ" },
+        { "cat": "미국 종목", "ticker": "ISRG",      "name": "ISRG" },
+        { "cat": "미국 종목", "ticker": "SYM",       "name": "SYM" },
+        { "cat": "한국 ETF",  "ticker": "445290.KS", "name": "KODEX K-로봇액티브" },
+        { "cat": "한국 종목", "ticker": "454910.KS", "name": "두산로보틱스" },
+        { "cat": "한국 종목", "ticker": "277810.KQ", "name": "레인보우로보틱스" }
+      ]
+    },
+    {
+      "name": "비만/바이오",
+      "items": [
+        { "cat": "미국 ETF",  "ticker": "XBI",       "name": "XBI" },
+        { "cat": "미국 ETF",  "ticker": "OBES",      "name": "OBES" },
+        { "cat": "미국 종목", "ticker": "LLY",       "name": "LLY" },
+        { "cat": "미국 종목", "ticker": "NVO",       "name": "NVO" },
+        { "cat": "한국 ETF",  "ticker": "476070.KS", "name": "KODEX 글로벌비만치료제" },
+        { "cat": "한국 종목", "ticker": "196170.KQ", "name": "알테오젠" }
+      ]
+    },
+    {
+      "name": "가상자산",
+      "items": [
+        { "cat": "미국 ETF",  "ticker": "IBIT",      "name": "IBIT" },
+        { "cat": "미국 종목", "ticker": "COIN",      "name": "COIN" },
+        { "cat": "미국 종목", "ticker": "MSTR",      "name": "MSTR" },
+        { "cat": "한국 종목", "ticker": "041190.KQ", "name": "우리기술투자" }
+      ]
+    }
+  ],
+
   "holdings": [
     { "ticker": "379780.KS", "name": "RISE 미국S&P500",       "buyPrice": 19244, "quantity": 329, "group": "ISA" },
     { "ticker": "458730.KS", "name": "TIGER 미국배당다우존스", "buyPrice": 14385, "quantity": 210, "group": "ISA" },

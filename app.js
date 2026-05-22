@@ -9,14 +9,20 @@
 
 const $ = (sel) => document.querySelector(sel);
 
-const DEFAULT_GROUP = "일반";   // group 이 없는 종목이 들어갈 기본 그룹
-const ALL_TAB = "전체";          // 모든 종목을 보여주는 탭
-const CHEONGYAK_TAB = "🏠 청약"; // 부동산 청약 일정 탭
+const DEFAULT_GROUP = "일반";    // group 이 없는 보유 종목이 들어갈 기본 그룹
+const WATCH_TAB = "관심그룹";     // 직접 고른 관심 종목만 모아 보는 탭
+const CHEONGYAK_TAB = "🏠 청약";  // 부동산 청약 일정 탭
+
+// 관심그룹 안에서 종목을 묶는 분류 — 이 순서대로 섹션·바로가기가 표시됩니다.
+const WATCH_KINDS = ["통화", "지수", "주식", "코인"];
+const SECTOR_SECTION = "섹터";   // 관심그룹 맨 아래에 들어가는 섹터 분류 표
 
 let portfolioCache = null;
-let entries = [];      // [{ group, cardHtml, summaryRow|null }]
-let tabOrder = [];     // [ALL_TAB, ...그룹들, CHEONGYAK_TAB]
-let currentTab = ALL_TAB;
+let entries = [];      // 보유 종목 [{ group, cardHtml, summaryRow|null }]
+let watchEntries = []; // 관심 종목 [{ kind, cardHtml }]
+let sectorGroups = []; // 섹터별 미니 카드 [{ name, cardsHtml, count }]
+let tabOrder = [];     // [WATCH_TAB, ...그룹들, CHEONGYAK_TAB]
+let currentTab = WATCH_TAB;
 let cheongyak = null;       // cheongyak.json 내용 (또는 { __error })
 let stockStatusText = "";   // 주식 탭에서 보여줄 상태줄 텍스트
 
@@ -43,23 +49,33 @@ async function loadJson(path) {
   return res.json();
 }
 
-/* ---------- 손익 계산 ---------- */
-function computeQuote(holding, q) {
-  const price = q.price;
-  const prevClose = typeof q.prevClose === "number" ? q.prevClose : price;
+/* ---------- 시세 (현재가 · 등락) ---------- */
+// mul: 표시 배율 (예: 100엔 기준으로 보려면 100). 등락률은 배율과 무관합니다.
+function quoteOf(q, mul = 1) {
+  const price = q.price * mul;
+  const prevClose = (typeof q.prevClose === "number" ? q.prevClose : q.price) * mul;
   const change = price - prevClose;
-  const changePct = prevClose ? (change / prevClose) * 100 : 0;
-
-  const value = price * holding.quantity;
-  const cost = holding.buyPrice * holding.quantity;
-  const pnl = value - cost;
-  const pnlPct = holding.buyPrice ? (price / holding.buyPrice - 1) * 100 : 0;
-
   return {
     price,
+    prevClose,
+    change,
+    changePct: prevClose ? (change / prevClose) * 100 : 0,
     currency: q.currency || "USD",
-    closes: Array.isArray(q.closes) ? q.closes : [],
-    change, changePct, value, cost, pnl, pnlPct,
+    closes: (Array.isArray(q.closes) ? q.closes : []).map((v) => v * mul),
+  };
+}
+
+/* ---------- 보유 종목 손익 계산 ---------- */
+function computeQuote(holding, q) {
+  const c = quoteOf(q);
+  const value = c.price * holding.quantity;
+  const cost = holding.buyPrice * holding.quantity;
+  return {
+    ...c,
+    value,
+    cost,
+    pnl: value - cost,
+    pnlPct: holding.buyPrice ? (c.price / holding.buyPrice - 1) * 100 : 0,
   };
 }
 
@@ -120,6 +136,45 @@ function renderError(holding, msg) {
   </article>`;
 }
 
+/* ---------- 관심 종목 카드 ---------- */
+// 지수·환율은 통화 기호 없이 숫자만, 주식·코인은 통화 기호와 함께 표시합니다.
+function fmtWatchPrice(value, kind, currency) {
+  if (kind === "지수" || kind === "통화") {
+    return value.toLocaleString("ko-KR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+  return fmtCurrency(value, currency);
+}
+
+function renderWatchCard(item, c) {
+  const arrow = c.change > 0 ? "▲" : c.change < 0 ? "▼" : "■";
+  const kind = item.kind;
+  const changeStr =
+    (c.change > 0 ? "+" : "") + fmtWatchPrice(c.change, kind, c.currency);
+  return `
+  <article class="card">
+    <div class="card-head">
+      <div>
+        <h2>${esc(item.name)}</h2>
+        <span class="ticker">${esc(item.ticker)}</span>
+      </div>
+      <div class="price">
+        ${fmtWatchPrice(c.price, kind, c.currency)}
+        <span class="change ${dirClass(c.change)}">${arrow} ${fmtPct(c.changePct)}</span>
+      </div>
+    </div>
+    ${sparkline(c.closes)}
+    <dl class="stats">
+      <div><dt>전일 종가</dt><dd>${fmtWatchPrice(c.prevClose, kind, c.currency)}</dd></div>
+      <div><dt>전일 대비</dt>
+        <dd class="${dirClass(c.change)}">${changeStr}</dd>
+      </div>
+    </dl>
+  </article>`;
+}
+
 /* ---------- 통화별 요약 ---------- */
 function renderSummary(rows) {
   const byCur = {};
@@ -143,7 +198,7 @@ function renderSummary(rows) {
 /* ---------- 탭 ---------- */
 function renderTabs() {
   const count = (name) =>
-    name === ALL_TAB ? entries.length
+    name === WATCH_TAB ? watchEntries.length
     : name === CHEONGYAK_TAB ? (cheongyak?.notices?.length || 0)
     : entries.filter((e) => e.group === name).length;
 
@@ -170,11 +225,14 @@ function selectTab(name) {
     renderCheongyak();
     return;
   }
+  if (name === WATCH_TAB) {
+    renderWatchlist();
+    return;
+  }
 
   $("#status").textContent = stockStatusText;
 
-  const shown =
-    name === ALL_TAB ? entries : entries.filter((e) => e.group === name);
+  const shown = entries.filter((e) => e.group === name);
 
   $("#grid").innerHTML = shown.length
     ? shown.map((e) => e.cardHtml).join("")
@@ -183,6 +241,111 @@ function selectTab(name) {
   $("#summary").innerHTML = renderSummary(
     shown.map((e) => e.summaryRow).filter(Boolean)
   );
+}
+
+/* ---------- 섹터 미니 카드 ---------- */
+// 섹터 영역에 들어가는 작은 카드 — 일반 카드의 약 절반 크기.
+function renderMiniCard(item, c) {
+  const arrow = c.change > 0 ? "▲" : c.change < 0 ? "▼" : "■";
+  const showTicker = item.name !== item.ticker;   // 미국 종목은 이름=티커라 생략
+  return `
+  <article class="card card-mini">
+    <div class="mini-head">
+      ${item.cat ? `<span class="mini-cat">${esc(item.cat)}</span>` : ""}
+      <h2 class="mini-name">${esc(item.name)}</h2>
+      ${showTicker ? `<span class="ticker">${esc(item.ticker)}</span>` : ""}
+    </div>
+    <div class="mini-price">
+      <span>${fmtCurrency(c.price, c.currency)}</span>
+      <span class="change ${dirClass(c.change)}">${arrow} ${fmtPct(c.changePct)}</span>
+    </div>
+    ${sparkline(c.closes)}
+  </article>`;
+}
+
+function renderMiniError(item, msg) {
+  return `
+  <article class="card card-mini card-error">
+    <div class="mini-head">
+      ${item.cat ? `<span class="mini-cat">${esc(item.cat)}</span>` : ""}
+      <h2 class="mini-name">${esc(item.name)}</h2>
+      <span class="ticker">${esc(item.ticker || "")}</span>
+    </div>
+    <p class="mini-err">시세 없음<br><small>${esc(msg)}</small></p>
+  </article>`;
+}
+
+/* ---------- 관심그룹 탭 ---------- */
+// 보유 종목 탭과 달리 자산 요약이 없고, 분류(통화·지수·주식·코인)별 카드 섹션과
+// 맨 아래 섹터 영역(섹터별 미니 카드)으로 구성됩니다. 섹션 위에는 바로가기 바를 둡니다.
+function renderWatchlist() {
+  $("#status").textContent = stockStatusText;
+  $("#summary").innerHTML = "";
+
+  const byKind = {};
+  for (const e of watchEntries) (byKind[e.kind] ||= []).push(e);
+
+  // 정해진 분류(통화·지수·주식·코인)를 먼저, 그 밖의 분류는 뒤에 붙입니다.
+  const kinds = [
+    ...WATCH_KINDS.filter((k) => byKind[k]),
+    ...Object.keys(byKind).filter((k) => !WATCH_KINDS.includes(k)),
+  ];
+
+  if (!kinds.length && !sectorGroups.length) {
+    $("#grid").innerHTML =
+      '<p class="empty-msg">관심그룹에 종목이 없습니다 — portfolio.json 의 watchlist 를 편집하세요.</p>';
+    return;
+  }
+
+  // 카드 분류들 + (섹터가 있으면) 섹터 — 바로가기 바와 섹션을 함께 만듭니다.
+  const navKeys = sectorGroups.length ? [...kinds, SECTOR_SECTION] : kinds;
+  const sectorCount = sectorGroups.reduce((s, g) => s + g.count, 0);
+  const navCount = (k) =>
+    k === SECTOR_SECTION ? sectorCount : byKind[k].length;
+
+  const nav = `<nav class="watch-nav">${navKeys
+    .map(
+      (k) =>
+        `<button type="button" class="watch-nav-btn" data-kind="${esc(k)}">` +
+        `${esc(k)}<span class="watch-nav-count">${navCount(k)}</span></button>`
+    )
+    .join("")}</nav>`;
+
+  let sections = kinds
+    .map(
+      (k) =>
+        `<h3 class="watch-section" id="watch-sec-${esc(k)}">${esc(k)}</h3>` +
+        byKind[k].map((e) => e.cardHtml).join("")
+    )
+    .join("");
+
+  if (sectorGroups.length) {
+    sections +=
+      `<h3 class="watch-section" id="watch-sec-${esc(SECTOR_SECTION)}">` +
+      `${esc(SECTOR_SECTION)}<span class="sec-hint">주간 추이</span></h3>` +
+      sectorGroups
+        .map(
+          (g) =>
+            `<div class="sector-group">` +
+            `<h4 class="sector-name">${esc(g.name)}</h4>` +
+            `<div class="mini-grid">${g.cardsHtml}</div>` +
+            `</div>`
+        )
+        .join("");
+  }
+
+  $("#grid").innerHTML = nav + sections;
+
+  // 바로가기 클릭 → 해당 섹션으로 부드럽게 스크롤
+  $("#grid")
+    .querySelectorAll(".watch-nav-btn")
+    .forEach((b) =>
+      b.addEventListener("click", () => {
+        document
+          .getElementById("watch-sec-" + b.dataset.kind)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      })
+    );
 }
 
 /* ============================================================
@@ -352,11 +515,7 @@ function renderCheongyak() {
 
 /* ---------- 메인 ---------- */
 async function load() {
-  const btn = $("#refresh");
   const status = $("#status");
-
-  btn.disabled = true;
-  btn.classList.add("loading");
   status.textContent = "불러오는 중…";
 
   try {
@@ -370,9 +529,41 @@ async function load() {
     document.body.dataset.scheme = portfolio.colorScheme || "kr";
 
     entries = [];
+    watchEntries = [];
+    sectorGroups = [];
     const groups = [];
 
-    for (const h of portfolio.holdings) {
+    // 관심그룹 — 직접 고른 관심 종목 (보유 수량·평단 없이 시세만)
+    for (const w of portfolio.watchlist || []) {
+      const kind = w.kind || "기타";
+      const q = data.quotes?.[w.ticker];
+      if (!q || q.error || typeof q.price !== "number") {
+        watchEntries.push({ kind, cardHtml: renderError(w, q?.error || "데이터 없음") });
+        continue;
+      }
+      watchEntries.push({ kind, cardHtml: renderWatchCard(w, quoteOf(q, w.mul || 1)) });
+    }
+
+    // 섹터 — 코인 섹션 아래 섹터 영역에 들어가는 미니 카드 (섹터별 그룹)
+    for (const sec of portfolio.sectors || []) {
+      const seen = new Set();
+      let cardsHtml = "";
+      let count = 0;
+      for (const it of sec.items || []) {
+        if (!it.ticker || seen.has(it.ticker)) continue; // 같은 섹터 내 중복 티커는 한 번만
+        seen.add(it.ticker);
+        count++;
+        const q = data.weekly?.[it.ticker];   // 섹터는 주봉 시세 사용
+        cardsHtml +=
+          !q || q.error || typeof q.price !== "number"
+            ? renderMiniError(it, q?.error || "데이터 없음")
+            : renderMiniCard(it, quoteOf(q));
+      }
+      if (count) sectorGroups.push({ name: sec.name || "(이름 없음)", cardsHtml, count });
+    }
+
+    // 보유 종목 — group 별 탭으로 분리, 통화별 자산 요약 집계
+    for (const h of portfolio.holdings || []) {
       const group = h.group || DEFAULT_GROUP;
       if (!groups.includes(group)) groups.push(group);
 
@@ -393,9 +584,9 @@ async function load() {
       });
     }
 
-    // 주식 그룹 탭들 뒤에 청약 일정 탭을 항상 붙입니다.
-    tabOrder = [ALL_TAB, ...groups, CHEONGYAK_TAB];
-    if (!tabOrder.includes(currentTab)) currentTab = ALL_TAB;
+    // 관심그룹 → 보유 그룹 탭들 → 청약 일정 탭 순서로 배치합니다.
+    tabOrder = [WATCH_TAB, ...groups, CHEONGYAK_TAB];
+    if (!tabOrder.includes(currentTab)) currentTab = WATCH_TAB;
 
     renderTabs();
     // URL 해시(#탭이름)로 특정 탭을 열 수 있음 — 북마크/링크 공유용
@@ -419,13 +610,7 @@ async function load() {
         </p>
       </article>`;
     status.textContent = "불러오기 실패";
-  } finally {
-    btn.disabled = false;
-    btn.classList.remove("loading");
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  $("#refresh").addEventListener("click", load);
-  load();
-});
+document.addEventListener("DOMContentLoaded", load);

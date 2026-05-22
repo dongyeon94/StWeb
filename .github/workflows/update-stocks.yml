@@ -2,9 +2,9 @@ name: 시세·청약 갱신 & 배포
 
 on:
   schedule:
-    # 10분마다 실행 (GitHub 사정에 따라 다소 지연될 수 있음).
-    # 간격을 늘리려면 '*/10' 을 '*/30' 등으로 바꾸세요.
-    - cron: "*/10 * * * *"
+    # 30분마다 실행 — 주식 시세를 갱신합니다 (GitHub 사정에 따라 다소 지연될 수 있음).
+    # 청약 일정은 아래 단계에서 한국 기준 하루 2회(오전 10시·오후 3시)만 새로 받습니다.
+    - cron: "*/30 * * * *"
   workflow_dispatch:        # Actions 탭에서 수동 실행
   push:
     branches: [main]        # 코드 수정 시 즉시 반영
@@ -35,15 +35,63 @@ jobs:
         with:
           node-version: "20"
 
+      # ── 주식 시세: 실행할 때마다 갱신 ──────────────────────────────
       - name: 시세 데이터 받기
         run: node scripts/fetch-stocks.mjs
 
+      # ── 청약 일정: 한국 기준 하루 2회(오전 10시·오후 3시)만 갱신 ────
+      # 주식과 달리 청약 공고는 자주 안 바뀌므로 매 실행마다 받지 않습니다.
+      # cheongyak.json 을 캐시에 보관해 두고, 갱신이 필요할 때만 새로 받습니다.
+      #  · schedule(30분): 마지막 수집이 직전 슬롯(10시/15시 KST) 전이면 그 슬롯 첫 실행에서 수집
+      #  · push / 수동 실행: 항상 새로 수집 (인증키 등록 직후 바로 반영되도록)
+      - name: 청약 일정 캐시 복원
+        uses: actions/cache/restore@v4
+        with:
+          path: cheongyak.json
+          # run_id 키는 매 실행 고유 → 항상 빗나가고, restore-keys 로 '가장 최근' 캐시를 가져옵니다.
+          key: cheongyak-${{ github.run_id }}
+          restore-keys: |
+            cheongyak-
+
+      - name: 청약 갱신 필요 여부 판단
+        id: cy
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "fetch=true" >> "$GITHUB_OUTPUT"
+            echo "${{ github.event_name }} 이벤트 → 청약 일정 새로 받기"
+            exit 0
+          fi
+          fetch=$(node -e '
+            const now = Date.now();
+            const k = new Date(now + 9 * 3600000);   // KST 벽시계
+            // KST hh시(오늘)를 실제 epoch(ms) 로 환산
+            const slot = (hh) =>
+              Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate(), hh) - 9 * 3600000;
+            const s10 = slot(10), s15 = slot(15);
+            // 지금이 속한 수집 슬롯의 시작 (오늘 15시 / 오늘 10시 / 어제 15시)
+            const slotStart = now >= s15 ? s15 : now >= s10 ? s10 : s15 - 864e5;
+            let last = NaN;
+            try { last = Date.parse(require("./cheongyak.json").updatedAt || ""); } catch {}
+            // 이번 슬롯 안에서 아직 안 받았으면 수집
+            process.stdout.write(!last || isNaN(last) || last < slotStart ? "true" : "false");
+          ')
+          echo "fetch=$fetch" >> "$GITHUB_OUTPUT"
+          echo "schedule 이벤트 → 이번 슬롯 청약 갱신 필요 = $fetch"
+
       - name: 청약 일정 받기
+        if: steps.cy.outputs.fetch == 'true'
         run: node scripts/fetch-cheongyak.mjs
         env:
           # data.go.kr 인증키 — 저장소 Secret 으로 등록 (README 참고).
           # 미설정이어도 스크립트는 빈 결과를 쓰고 정상 종료합니다.
           DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+
+      - name: 청약 일정 캐시 저장
+        if: steps.cy.outputs.fetch == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: cheongyak.json
+          key: cheongyak-${{ github.run_id }}
 
       - name: 사이트 파일 모으기
         run: |
