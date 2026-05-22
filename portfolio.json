@@ -1,13 +1,15 @@
 {
   "colorScheme": "kr",
   "holdings": [
-    { "ticker": "005930.KS", "name": "삼성전자",   "buyPrice": 70000,  "quantity": 10 },
-    { "ticker": "000660.KS", "name": "SK하이닉스", "buyPrice": 150000, "quantity": 5 },
-    { "ticker": "AAPL",      "name": "Apple",      "buyPrice": 180,    "quantity": 5 },
-    { "ticker": "NVDA",      "name": "NVIDIA",     "buyPrice": 120,    "quantity": 8 },
-    { "ticker": "TSLA",      "name": "Tesla",      "buyPrice": 250,    "quantity": 4 },
+    { "ticker": "379780.KS", "name": "RISE 미국S&P500",       "buyPrice": 19244, "quantity": 329, "group": "ISA" },
+    { "ticker": "458730.KS", "name": "TIGER 미국배당다우존스", "buyPrice": 14385, "quantity": 210, "group": "ISA" },
 
-    { "ticker": "O",    "name": "리얼티인컴",     "buyPrice": 55, "quantity": 10, "group": "월배당" },
-    { "ticker": "JEPI", "name": "JP모건 배당ETF", "buyPrice": 56, "quantity": 12, "group": "월배당" }
+    { "ticker": "453850.KS", "name": "ACE 미국30년국채액티브(H)",          "buyPrice": 7523,  "quantity": 199, "group": "월배당" },
+    { "ticker": "458730.KS", "name": "TIGER 미국배당다우존스",             "buyPrice": 14662, "quantity": 126, "group": "월배당" },
+    { "ticker": "472150.KS", "name": "TIGER 배당커버드콜액티브",           "buyPrice": 16555, "quantity": 52,  "group": "월배당" },
+    { "ticker": "480030.KS", "name": "ACE 미국500데일리타겟커버드콜(합성)", "buyPrice": 10540, "quantity": 166, "group": "월배당" },
+    { "ticker": "483290.KS", "name": "KODEX 미국배당다우존스타겟커버드콜",  "buyPrice": 10798, "quantity": 213, "group": "월배당" },
+    { "ticker": "484880.KS", "name": "SOL 금융지주플러스고배당",           "buyPrice": 20674, "quantity": 47,  "group": "월배당" },
+    { "ticker": "489030.KS", "name": "PLUS 고배당주위클리커버드콜",        "buyPrice": 8378,  "quantity": 111, "group": "월배당" }
   ]
 }

@@ -46,13 +46,16 @@ async function fetchTicker(ticker) {
 const portfolio = JSON.parse(await readFile(new URL("portfolio.json", root), "utf8"));
 const quotes = {};
 
-for (const h of portfolio.holdings) {
+// 같은 종목이 여러 그룹에 있을 수 있으므로 고유 티커만 조회
+const tickers = [...new Set(portfolio.holdings.map((h) => h.ticker))];
+
+for (const ticker of tickers) {
   try {
-    quotes[h.ticker] = await fetchTicker(h.ticker);
-    console.log(`OK    ${h.ticker.padEnd(12)} ${quotes[h.ticker].price}`);
+    quotes[ticker] = await fetchTicker(ticker);
+    console.log(`OK    ${ticker.padEnd(12)} ${quotes[ticker].price}`);
   } catch (e) {
-    quotes[h.ticker] = { error: String(e.message || e) };
-    console.log(`FAIL  ${h.ticker.padEnd(12)} ${e.message || e}`);
+    quotes[ticker] = { error: String(e.message || e) };
+    console.log(`FAIL  ${ticker.padEnd(12)} ${e.message || e}`);
   }
   await new Promise((r) => setTimeout(r, 300)); // 야후 부담 완화
 }
@@ -61,4 +64,4 @@ const data = { updatedAt: new Date().toISOString(), quotes };
 await writeFile(new URL("data.json", root), JSON.stringify(data, null, 2) + "\n");
 
 const ok = Object.values(quotes).filter((q) => !q.error).length;
-console.log(`\ndata.json 작성 완료 — 성공 ${ok} / 전체 ${portfolio.holdings.length}`);
+console.log(`\ndata.json 작성 완료 — 성공 ${ok} / 전체 ${tickers.length} 종목`);
