@@ -1,4 +1,4 @@
-name: 시세 갱신 & 배포
+name: 시세·청약 갱신 & 배포
 
 on:
   schedule:
@@ -38,10 +38,17 @@ jobs:
       - name: 시세 데이터 받기
         run: node scripts/fetch-stocks.mjs
 
+      - name: 청약 일정 받기
+        run: node scripts/fetch-cheongyak.mjs
+        env:
+          # data.go.kr 인증키 — 저장소 Secret 으로 등록 (README 참고).
+          # 미설정이어도 스크립트는 빈 결과를 쓰고 정상 종료합니다.
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+
       - name: 사이트 파일 모으기
         run: |
           mkdir -p _site
-          cp index.html style.css app.js portfolio.json data.json _site/
+          cp index.html style.css app.js portfolio.json data.json cheongyak.json _site/
 
       - name: Pages 설정
         uses: actions/configure-pages@v5
