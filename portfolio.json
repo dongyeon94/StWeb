@@ -6,10 +6,10 @@
 
     { "ticker": "453850.KS", "name": "ACE 미국30년국채액티브(H)",          "buyPrice": 7523,  "quantity": 199, "group": "월배당" },
     { "ticker": "458730.KS", "name": "TIGER 미국배당다우존스",             "buyPrice": 14662, "quantity": 126, "group": "월배당" },
-    { "ticker": "472150.KS", "name": "TIGER 배당커버드콜액티브",           "buyPrice": 16555, "quantity": 52,  "group": "월배당" },
+    { "ticker": "472150.KS", "name": "TIGER 배당커버드콜액티브",           "buyPrice": 16555, "quantity": 40,  "group": "월배당" },
     { "ticker": "480030.KS", "name": "ACE 미국500데일리타겟커버드콜(합성)", "buyPrice": 10540, "quantity": 166, "group": "월배당" },
     { "ticker": "483290.KS", "name": "KODEX 미국배당다우존스타겟커버드콜",  "buyPrice": 10798, "quantity": 213, "group": "월배당" },
     { "ticker": "484880.KS", "name": "SOL 금융지주플러스고배당",           "buyPrice": 20674, "quantity": 47,  "group": "월배당" },
-    { "ticker": "489030.KS", "name": "PLUS 고배당주위클리커버드콜",        "buyPrice": 8378,  "quantity": 111, "group": "월배당" }
+    { "ticker": "489030.KS", "name": "PLUS 고배당주위클리커버드콜",        "buyPrice": 8378,  "quantity": 150, "group": "월배당" }
   ]
 }
