@@ -18,13 +18,6 @@ const WEEKLY = { range: "1y", interval: "1wk" };
 
 const root = new URL("../", import.meta.url);
 
-// 주봉 그룹핑용 — 해당 시각이 속한 주의 시작(월요일 00:00 UTC) epoch
-function weekStart(ms) {
-  const d = new Date(ms);
-  const dow = (d.getUTCDay() + 6) % 7;            // 월=0 … 일=6
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - dow);
-}
-
 async function fetchTicker(ticker, { range, interval }) {
   const url = `${YAHOO}${encodeURIComponent(ticker)}?range=${range}&interval=${interval}`;
   const res = await fetch(url, { headers: HEADERS });
@@ -38,25 +31,30 @@ async function fetchTicker(ticker, { range, interval }) {
   if (typeof meta.regularMarketPrice !== "number") {
     throw new Error("시세 없음");
   }
+  const price = meta.regularMarketPrice;
 
+  // (시각, 종가) 쌍 중 종가가 숫자인 막대만
   const ts = r.timestamp || [];
   const rawCloses = r.indicators?.quote?.[0]?.close || [];
+  const bars = ts
+    .map((t, i) => ({ t, c: rawCloses[i] }))
+    .filter((b) => typeof b.c === "number");
 
-  let closes;
   if (interval === "1wk") {
-    // 야후 주봉은 '현재 주' 막대 위에 실시간 포인트를 덧붙여 끝 종가가 중복됩니다.
-    // 주 단위로 묶어 한 주당 마지막 종가만 남깁니다(중복 제거).
-    const byWeek = new Map();
-    ts.forEach((t, i) => {
-      const c = rawCloses[i];
-      if (typeof c === "number") byWeek.set(weekStart(t * 1000), c);
-    });
-    closes = [...byWeek.values()];
-  } else {
-    closes = rawCloses.filter((v) => typeof v === "number");
+    // 야후 주봉은 '현재 주' 막대 뒤에 실시간 포인트를 하나 더 붙입니다.
+    // 정상 주봉은 정확히 7일 간격이므로, 마지막 간격이 그보다 짧으면(<6일)
+    // 그 실시간 포인트를 버립니다. (시간대와 무관 — 한국 종목도 안전)
+    if (
+      bars.length >= 2 &&
+      bars[bars.length - 1].t - bars[bars.length - 2].t < 6 * 86400
+    ) {
+      bars.pop();
+    }
+    // 마지막(현재 주) 종가는 실시간가로 맞춰 차트가 현재가에서 끝나게 합니다.
+    if (bars.length) bars[bars.length - 1].c = price;
   }
 
-  const price = meta.regularMarketPrice;
+  const closes = bars.map((b) => b.c);
   // 직전 구간(전일/전주) 종가: 종가 배열의 끝에서 두 번째 값.
   // (chartPreviousClose 는 차트 기간 시작점 종가라 등락 계산에 부적합)
   const prevClose =
