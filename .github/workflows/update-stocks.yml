@@ -1,0 +1,55 @@
+name: 시세 갱신 & 배포
+
+on:
+  schedule:
+    # 10분마다 실행 (GitHub 사정에 따라 다소 지연될 수 있음).
+    # 간격을 늘리려면 '*/10' 을 '*/30' 등으로 바꾸세요.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:        # Actions 탭에서 수동 실행
+  push:
+    branches: [main]        # 코드 수정 시 즉시 반영
+
+# GitHub Pages 배포에 필요한 권한
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 동시 실행 방지
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 시세 데이터 받기
+        run: node scripts/fetch-stocks.mjs
+
+      - name: 사이트 파일 모으기
+        run: |
+          mkdir -p _site
+          cp index.html style.css app.js portfolio.json data.json _site/
+
+      - name: Pages 설정
+        uses: actions/configure-pages@v5
+
+      - name: 아티팩트 업로드
+        uses: actions/upload-pages-artifact@v3
+        # path 기본값은 _site
+
+      - name: 배포
+        id: deploy
+        uses: actions/deploy-pages@v4

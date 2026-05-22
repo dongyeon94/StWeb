@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>내 주식 대시보드</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-scheme="kr">
+  <div class="wrap">
+    <header class="top">
+      <h1>📈 내 주식 대시보드</h1>
+      <button id="refresh" type="button">갱신</button>
+    </header>
+
+    <section id="summary" class="summary"></section>
+    <p id="status" class="status">불러오는 중…</p>
+
+    <main id="grid" class="grid"></main>
+
+    <footer class="foot">
+      데이터: Yahoo Finance · 보유 종목은 <code>portfolio.json</code>에서 편집하세요
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

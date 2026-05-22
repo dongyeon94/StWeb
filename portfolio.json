@@ -1,0 +1,10 @@
+{
+  "colorScheme": "kr",
+  "holdings": [
+    { "ticker": "005930.KS", "name": "삼성전자",   "buyPrice": 70000,  "quantity": 10 },
+    { "ticker": "000660.KS", "name": "SK하이닉스", "buyPrice": 150000, "quantity": 5 },
+    { "ticker": "AAPL",      "name": "Apple",      "buyPrice": 180,    "quantity": 5 },
+    { "ticker": "NVDA",      "name": "NVIDIA",     "buyPrice": 120,    "quantity": 8 },
+    { "ticker": "TSLA",      "name": "Tesla",      "buyPrice": 250,    "quantity": 4 }
+  ]
+}
