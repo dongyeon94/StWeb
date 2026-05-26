@@ -55,11 +55,37 @@ async function fetchTicker(ticker, { range, interval }) {
   }
 
   const closes = bars.map((b) => b.c);
-  // 직전 구간(전일/전주) 종가: 종가 배열의 끝에서 두 번째 값.
-  // (chartPreviousClose 는 차트 기간 시작점 종가라 등락 계산에 부적합)
-  const prevClose =
-    closes.length >= 2 ? closes[closes.length - 2]
-                       : (meta.chartPreviousClose ?? price);
+
+  let prevClose;
+  if (interval === "1wk") {
+    // 주봉 등락률의 기준은 '이번 주 월요일 시가(개장가)'로 잡습니다.
+    // 야후 주봉 막대는 거래소 현지 월요일 00:00 에 앵커되고, 그 막대의 open 이
+    // 곧 그 주 월요일 첫 거래 가격(한국 09:00 KRX, 미국 09:30 ET)입니다.
+    // 현재 진행 중인 주 막대는 close 가 null 이라 필터에서 빠지므로, 원본 ts/open 을
+    // 따로 훑어 가장 최근의 '현지 월요일 00:00' 막대 open 을 찾습니다.
+    const rawOpens = r.indicators?.quote?.[0]?.open || [];
+    const tzOffset = meta.gmtoffset || 0;   // 거래소 표준시 오프셋 (초). 한국 +32400
+    const isMondayLocal = (t) => {
+      const local = new Date((t + tzOffset) * 1000);
+      // UTC 메서드를 쓰면 (UTC + offset) 의 결과를 그대로 읽을 수 있음
+      return local.getUTCDay() === 1 && local.getUTCHours() === 0;
+    };
+    let mondayOpen = null;
+    for (let i = ts.length - 1; i >= 0; i--) {
+      if (isMondayLocal(ts[i]) && typeof rawOpens[i] === "number") {
+        mondayOpen = rawOpens[i];
+        break;
+      }
+    }
+    prevClose = mondayOpen
+      ?? (closes.length >= 2 ? closes[closes.length - 2] : (meta.chartPreviousClose ?? price));
+  } else {
+    // 일봉: 전일 종가 = 종가 배열 끝에서 두 번째 값.
+    // (chartPreviousClose 는 차트 기간 시작점 종가라 등락 계산에 부적합)
+    prevClose =
+      closes.length >= 2 ? closes[closes.length - 2]
+                         : (meta.chartPreviousClose ?? price);
+  }
 
   return { price, prevClose, currency: meta.currency || "USD", closes };
 }
