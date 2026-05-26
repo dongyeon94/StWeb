@@ -1,5 +1,5 @@
 // ============================================================
-//  내 주식 대시보드 — 동작 로직
+//  관심 대시보드 — 동작 로직
 //
 //  portfolio.json (종목 설정) + data.json (GitHub Actions가 받아둔 시세)
 //  를 읽어 화면을 그립니다. 둘 다 같은 출처라 CORS 가 없습니다.
@@ -374,6 +374,7 @@ const md  = (s) => (s ? esc(s).slice(5).replace(/-/g, ".") : "");   // 2026-05-2
 
 const STATUS_KEY = { 접수중: "open", 예정: "soon", 공고중: "posted", 마감: "closed" };
 const KIND_KEY   = { 분양: "sale", 임대: "rent", 무순위: "extra" };
+const SRC_KEY    = { LH: "lh", 청약홈: "home" };
 
 function cheongyakStatus(n) {
   const today = new Date().toISOString().slice(0, 10);
@@ -402,6 +403,7 @@ function noticeMsg(title, sub) {
 function renderNoticeCard(n) {
   const status = cheongyakStatus(n);
   const sk = STATUS_KEY[status] || "posted";
+  const src = SRC_KEY[n.source] || "etc";
 
   // 배지: 접수중이면 마감까지, 예정이면 접수시작까지 D-day
   let badge = status;
@@ -422,10 +424,10 @@ function renderNoticeCard(n) {
   const loc = [n.region, n.address].filter(Boolean).join(" · ");
 
   return `
-  <article class="card notice cy-${sk}">
+  <article class="card notice cy-${sk} src-${src}">
     <div class="notice-top">
+      <span class="chip chip-src chip-src-${src}">${esc(n.source || "")}</span>
       <span class="chip chip-${KIND_KEY[n.kind] || "sale"}">${esc(n.kind || "")}</span>
-      <span class="chip chip-src">${esc(n.source || "")}</span>
       <span class="cy-badge cy-badge-${sk}">${esc(badge)}</span>
     </div>
     <h2 class="notice-name">${esc(n.name || "(이름 없음)")}</h2>
@@ -491,12 +493,31 @@ function renderCheongyak() {
   notices.forEach((n) => {
     tally[cheongyakStatus(n)]++;
   });
+
+  // 신청시작 가장 빠른 공고 — 오늘 이후 applyStart 중 최솟값
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = notices
+    .filter((n) => n.applyStart && n.applyStart >= today)
+    .sort((a, b) => a.applyStart.localeCompare(b.applyStart))[0];
+
+  let nextBox = "";
+  if (upcoming) {
+    const d = dday(upcoming.applyStart);
+    const dStr = d === 0 ? "오늘 시작" : d > 0 ? `D-${d}` : "";
+    nextBox = `
+      <div class="sum-box sum-next">
+        <span class="sum-label">신청시작 가장 빠름 · ${esc(upcoming.source || "")}</span>
+        <span class="sum-value">${dStr} <small>${ymd(upcoming.applyStart)}</small></span>
+        <span class="sum-pnl">${esc(upcoming.name || "")}</span>
+      </div>`;
+  }
+
   summary.innerHTML = `
     <div class="sum-box">
       <span class="sum-label">청약 공고</span>
       <span class="sum-value">${notices.length}건</span>
       <span class="sum-pnl">접수중 ${tally.접수중} · 예정 ${tally.예정} · 마감 ${tally.마감}</span>
-    </div>`;
+    </div>${nextBox}`;
 
   // 일부 출처만 실패한 경우 경고 한 줄
   const failed = c.sources
@@ -613,4 +634,16 @@ async function load() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", load);
+document.addEventListener("DOMContentLoaded", () => {
+  load();
+
+  const toTop = document.getElementById("to-top");
+  if (toTop) {
+    const onScroll = () => toTop.classList.toggle("show", window.scrollY > 240);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    toTop.addEventListener("click", () => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
+});

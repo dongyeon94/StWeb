@@ -190,6 +190,12 @@ body {
 .chip-rent  { background: rgba(34, 197, 94, .16);  color: #58d68a; }
 .chip-extra { background: rgba(245, 158, 11, .18); color: #f5b942; }
 .chip-src   { background: var(--panel-2); color: var(--muted); }
+.chip-src-lh   { background: rgba(20, 184, 166, .22); color: #5eead4; }
+.chip-src-home { background: rgba(168, 85, 247, .22); color: #c4b5fd; }
+
+/* 출처별 카드 좌측 보더 — 한눈에 LH/청약홈 구분 */
+.notice.src-lh   { border-left: 3px solid #14b8a6; }
+.notice.src-home { border-left: 3px solid #a855f7; }
 
 .cy-badge {
   margin-left: auto;
@@ -226,9 +232,38 @@ body {
 
 .cy-closed { opacity: .6; }
 
+/* 신청시작 가장 빠른 공고 강조 박스 */
+.sum-next {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(76, 141, 255, .14), var(--panel));
+}
+.sum-next .sum-value { color: var(--accent); }
+.sum-next .sum-value small { font-size: .75rem; color: var(--muted); font-weight: 600; margin-left: 4px; }
+.sum-next .sum-pnl { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+
 .foot { margin-top: 32px; text-align: center; color: var(--muted); font-size: .8rem; }
 .foot code { background: var(--panel-2); padding: 2px 6px; border-radius: 5px; }
 
+.to-top {
+  position: fixed;
+  right: 20px; bottom: 20px;
+  width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff;
+  border: none; border-radius: 50%;
+  font-size: 1.25rem; font-weight: 700; line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .35);
+  opacity: 0; pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity .18s, transform .18s;
+  z-index: 50;
+}
+.to-top.show { opacity: 1; pointer-events: auto; transform: translateY(0); }
+.to-top:hover  { opacity: .9; }
+.to-top:active { transform: scale(.95); }
+
 @media (max-width: 480px) {
   .top h1 { font-size: 1.2rem; }
+  .to-top { right: 14px; bottom: 14px; width: 40px; height: 40px; }
 }

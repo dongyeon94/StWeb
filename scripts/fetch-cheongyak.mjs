@@ -160,16 +160,23 @@ function absLhUrl(u) {
 
 function mapLh(r) {
   const type = r.AIS_TP_CD_NM || r.UPP_AIS_TP_NM || r.PAN_NM || "";
+  // LH 응답은 데이터 종류·시기마다 필드명이 달라 가능한 후보를 다 시도합니다.
+  const applyStart =
+    r.RCEPT_BGN_DT || r.RCEP_BGN_DT || r.RCEPT_BGNDE ||
+    r.SBSCRP_RCEPT_BGN_DT || r.APLY_BGN_DT || "";
+  const applyEnd =
+    r.CLSG_DT || r.RCEPT_END_DT || r.RCEP_END_DT || r.RCEPT_ENDDE ||
+    r.SBSCRP_RCEPT_END_DT || r.APLY_END_DT || "";
   return {
     source: "LH",
     kind: /분양/.test(type) && !/임대/.test(type) ? "분양" : "임대",
     name: r.PAN_NM || "(이름 없음)",
     region: r.CNP_CD_NM || r.AISTC || "",
     address: "",
-    noticeDate: normDate(r.PAN_NT_ST_DT || r.PAN_DT),   // 공고게시일
-    applyStart: "",
-    applyEnd: normDate(r.CLSG_DT),                      // 접수마감일
-    winnerDate: "",
+    noticeDate: normDate(r.PAN_NT_ST_DT || r.PAN_DT),
+    applyStart: normDate(applyStart),
+    applyEnd: normDate(applyEnd),
+    winnerDate: normDate(r.PRZWNER_PRESNATN_DE || r.WINR_PRSN_DT || ""),
     url: absLhUrl(r.DTL_URL || r.AHFL_URL || ""),
   };
 }
