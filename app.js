@@ -25,6 +25,7 @@ let tabOrder = [];     // [WATCH_TAB, ...그룹들, CHEONGYAK_TAB]
 let currentTab = WATCH_TAB;
 let cheongyak = null;       // cheongyak.json 내용 (또는 { __error })
 let stockStatusText = "";   // 주식 탭에서 보여줄 상태줄 텍스트
+let groupNotes = {};        // { 그룹명: "탭 상단에 띄울 메모 (인라인 **bold** 지원)" }
 
 /* ---------- 숫자 포맷 ---------- */
 function fmtCurrency(value, currency) {
@@ -234,9 +235,10 @@ function selectTab(name) {
 
   const shown = entries.filter((e) => e.group === name);
 
-  $("#grid").innerHTML = shown.length
+  const noteHtml = renderGroupNote(groupNotes[name]);
+  $("#grid").innerHTML = noteHtml + (shown.length
     ? shown.map((e) => e.cardHtml).join("")
-    : '<p class="empty-msg">이 탭에 표시할 종목이 없습니다.</p>';
+    : '<p class="empty-msg">이 탭에 표시할 종목이 없습니다.</p>');
 
   $("#summary").innerHTML = renderSummary(
     shown.map((e) => e.summaryRow).filter(Boolean)
@@ -358,6 +360,13 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
+
+// 그룹 탭 상단 메모 — `**bold**` 만 강조로 변환. 그 외는 평문.
+function renderGroupNote(text) {
+  if (!text) return "";
+  const html = esc(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  return `<p class="group-note">${html}</p>`;
+}
 
 // 공고 상세 URL — 개별 링크가 없으면 출처 사이트로 연결해 버튼이 항상 동작하게 함
 function noticeUrl(n) {
@@ -548,6 +557,8 @@ async function load() {
     portfolioCache = portfolio;
     cheongyak = cheongyakData;
     document.body.dataset.scheme = portfolio.colorScheme || "kr";
+    groupNotes = portfolio.groupNotes && typeof portfolio.groupNotes === "object"
+      ? portfolio.groupNotes : {};
 
     entries = [];
     watchEntries = [];
