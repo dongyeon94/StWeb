@@ -26,6 +26,7 @@ let tabOrder = [];     // [WATCH_TAB, ...그룹들, CHEONGYAK_TAB]
 let currentTab = WATCH_TAB;
 let cheongyak = null;       // cheongyak.json 내용 (또는 { __error })
 let sheets = null;          // sheets.json 내용 (또는 { __error })
+let testReport = null;      // 거래내역으로 계산한 현재 보유·손익 리포트 (load 시 계산)
 let stockStatusText = "";   // 주식 탭에서 보여줄 상태줄 텍스트
 let groupNotes = {};        // { 그룹명: "탭 상단에 띄울 메모 (인라인 **bold** 지원)" }
 
@@ -558,73 +559,219 @@ function renderCheongyak() {
 }
 
 /* ============================================================
-   테스트 탭 — 구글 시트 거래내역 표 렌더링
+   테스트 탭 — 구글 시트 거래내역으로 현재 보유·손익 계산
    ============================================================ */
 
-const TX_KIND_CLASS = { 입금: "tx-in", 출금: "tx-out", 매수: "tx-buy", 매도: "tx-sell", 환전: "tx-fx" };
+// 시트 거래내역을 시간순으로 누적해서 현재 보유 종목과 손익 리포트를 만듭니다.
+// - 평단(원화) = 누적 매수 정산금액(원) / 누적 보유 수량
+// - 평가손익(원) = (현재가 × 수량) - 누적 매수 정산금액
+// - 외화 종목은 현재가에 USD/KRW 환율을 곱해 원화로 환산 (FX 영향까지 손익에 반영)
+function buildTestReport(sheetsData, portfolio, data) {
+  const headers = Array.isArray(sheetsData?.headers) ? sheetsData.headers : [];
+  const rows = Array.isArray(sheetsData?.rows) ? sheetsData.rows : [];
+  if (!headers.length) return null;
+
+  const col = (name) => headers.indexOf(name);
+  const idx = {
+    type: col("거래유형"),
+    detail: col("상세내용"),
+    name: col("종목명"),
+    qty: col("수량"),
+    // '정산금액' 컬럼은 시트에 두 개(원본 통화 / 원화) — 마지막(원화)을 사용
+    amountKrw: headers.lastIndexOf("정산금액"),
+  };
+
+  const num = (v) => {
+    if (v == null) return 0;
+    const c = String(v).replace(/[₩,\s]/g, "");
+    const n = parseFloat(c);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  // 시트는 최신순. 시간순 누적을 위해 뒤집어서 순회.
+  const chronological = [...rows].reverse();
+
+  const positions = new Map();   // 종목명 → { qty, totalCostKrw }
+  let cashIn = 0, cashOut = 0, dividends = 0, realized = 0;
+
+  for (const r of chronological) {
+    const type = (r[idx.type] || "").trim();
+    const detail = (r[idx.detail] || "").trim();
+    const name = (r[idx.name] || "").trim();
+    const qty = num(r[idx.qty]);
+    const amt = num(r[idx.amountKrw]);
+
+    if (type === "입금") {
+      if (/분배금/.test(detail)) dividends += amt;
+      else if (/이체/.test(detail)) cashIn += amt;
+      // 대체입금·외화단수주매각대금 등은 손익 집계에서 제외
+    } else if (type === "출금") {
+      if (/이체/.test(detail)) cashOut += amt;
+    } else if (type === "매수" && name && qty > 0) {
+      const p = positions.get(name) || { qty: 0, totalCostKrw: 0 };
+      p.qty += qty;
+      p.totalCostKrw += amt;
+      positions.set(name, p);
+    } else if (type === "매도" && name && qty > 0) {
+      const p = positions.get(name);
+      if (!p || p.qty < 1e-6) continue;
+      const avgCost = p.totalCostKrw / p.qty;
+      const sellQty = Math.min(qty, p.qty);
+      realized += amt - avgCost * sellQty;
+      p.qty -= sellQty;
+      p.totalCostKrw -= avgCost * sellQty;
+      if (p.qty < 1e-6) positions.delete(name);
+    }
+    // 환전: 통화만 바꾸고 평가에 영향 없음 — 무시
+  }
+
+  // 종목명 → ticker 맵 (보유·관심·섹터에서 모두 수집)
+  const nameToTicker = new Map();
+  const collect = (arr, kProp = "name") => {
+    for (const it of arr || []) {
+      if (it[kProp] && it.ticker && !nameToTicker.has(it[kProp])) {
+        nameToTicker.set(it[kProp], it.ticker);
+      }
+    }
+  };
+  collect(portfolio?.holdings);
+  collect(portfolio?.watchlist);
+  for (const s2 of portfolio?.sectors || []) collect(s2.items);
+
+  const fx = data?.quotes?.["KRW=X"]?.price || null;   // USD → KRW
+
+  const heldList = [];
+  let totalCostKrw = 0, totalEvalKrw = 0;
+
+  for (const [name, p] of positions) {
+    if (p.qty < 1e-6) continue;
+    const ticker = nameToTicker.get(name) || null;
+    const q = ticker ? data?.quotes?.[ticker] : null;
+    let priceKrw = null;
+    if (q && typeof q.price === "number") {
+      priceKrw = q.currency === "USD" && fx ? q.price * fx : q.price;
+    }
+    const avgCostKrw = p.totalCostKrw / p.qty;
+    const evalKrw = priceKrw != null ? priceKrw * p.qty : null;
+    const pnlKrw = evalKrw != null ? evalKrw - p.totalCostKrw : null;
+    const pnlPct = pnlKrw != null && p.totalCostKrw > 0
+      ? (pnlKrw / p.totalCostKrw) * 100 : null;
+
+    heldList.push({
+      name, ticker, qty: p.qty,
+      avgCostKrw, priceKrw,
+      costKrw: p.totalCostKrw, evalKrw,
+      pnlKrw, pnlPct,
+    });
+    if (evalKrw != null) { totalEvalKrw += evalKrw; totalCostKrw += p.totalCostKrw; }
+  }
+
+  // 평가액 큰 순으로 정렬
+  heldList.sort((a, b) => (b.evalKrw ?? -Infinity) - (a.evalKrw ?? -Infinity));
+
+  const netCashIn = cashIn - cashOut;
+  const unrealizedKrw = totalEvalKrw - totalCostKrw;
+  const totalGain = realized + dividends + unrealizedKrw;
+  const totalGainPct = netCashIn > 0 ? (totalGain / netCashIn) * 100 : null;
+
+  return {
+    netCashIn, cashIn, cashOut, dividends, realized,
+    unrealizedKrw, totalCostKrw, totalEvalKrw, totalGain, totalGainPct,
+    heldList,
+  };
+}
 
 function renderTest() {
-  const s = sheets;
   const grid = $("#grid");
   const summary = $("#summary");
   const status = $("#status");
 
-  if (!s || s.__error) {
+  if (!sheets || sheets.__error) {
     summary.innerHTML = "";
     status.textContent = "구글 시트 불러오기 실패";
     grid.innerHTML = `<article class="card card-error">
       <p class="err-msg">구글 시트 데이터를 불러오지 못했습니다<br>
-        <small>${esc((s && s.__error) || "sheets.json 없음 — GitHub Actions 가 아직 실행되지 않았을 수 있습니다.")}</small>
+        <small>${esc((sheets && sheets.__error) || "sheets.json 없음 — GitHub Actions 가 아직 실행되지 않았을 수 있습니다.")}</small>
       </p>
     </article>`;
     return;
   }
-
-  status.textContent = s.updatedAt
-    ? `구글 시트 기준: ${new Date(s.updatedAt).toLocaleString("ko-KR")}`
-    : "구글 시트 — 아직 수집되지 않음";
-
-  const headers = Array.isArray(s.headers) ? s.headers : [];
-  const rows = Array.isArray(s.rows) ? s.rows : [];
-
-  // 거래유형(3번째 컬럼) 별 카운트
-  const typeIdx = headers.findIndex((h) => h === "거래유형");
-  const tally = {};
-  if (typeIdx >= 0) {
-    for (const r of rows) {
-      const k = (r[typeIdx] || "").trim();
-      if (!k) continue;
-      tally[k] = (tally[k] || 0) + 1;
-    }
-  }
-  const tallyStr = Object.entries(tally)
-    .map(([k, v]) => `${esc(k)} ${v}`)
-    .join(" · ") || "—";
-
-  summary.innerHTML = `
-    <div class="sum-box">
-      <span class="sum-label">${esc(s.source?.name || "거래내역")}</span>
-      <span class="sum-value">${rows.length}건</span>
-      <span class="sum-pnl">${tallyStr}</span>
-    </div>`;
-
-  if (!rows.length) {
-    grid.innerHTML = noticeMsg("시트에 표시할 행이 없습니다", "");
+  if (!testReport) {
+    summary.innerHTML = "";
+    status.textContent = "거래내역 계산 결과 없음";
+    grid.innerHTML = noticeMsg("계산할 거래내역이 없습니다", "");
     return;
   }
 
-  const thead = headers.map((h) => `<th>${esc(h)}</th>`).join("");
-  const tbody = rows.map((r) => {
-    const type = typeIdx >= 0 ? (r[typeIdx] || "").trim() : "";
-    const cls = TX_KIND_CLASS[type] || "";
-    const cells = headers.map((_, i) => `<td>${esc(r[i] ?? "")}</td>`).join("");
-    return `<tr class="${cls}">${cells}</tr>`;
+  const tr = testReport;
+  status.textContent = sheets.updatedAt
+    ? `거래내역 기준: ${new Date(sheets.updatedAt).toLocaleString("ko-KR")}  ·  현재가는 data.json 기준`
+    : "거래내역 기준: 알 수 없음";
+
+  const fmt = (v) => v == null ? "—" : Math.round(v).toLocaleString("ko-KR") + "원";
+  const sign = (v) => v == null ? "—"
+    : (v > 0 ? "+" : "") + Math.round(v).toLocaleString("ko-KR") + "원";
+  const sPct = (v) => v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(2) + "%";
+  const cls = (v) => v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : "flat";
+
+  summary.innerHTML = `
+    <div class="sum-box">
+      <span class="sum-label">순 입금 (실 투자금)</span>
+      <span class="sum-value">${fmt(tr.netCashIn)}</span>
+      <span class="sum-pnl">입금 ${fmt(tr.cashIn)} − 출금 ${fmt(tr.cashOut)}</span>
+    </div>
+    <div class="sum-box">
+      <span class="sum-label">현재 평가액</span>
+      <span class="sum-value">${fmt(tr.totalEvalKrw)}</span>
+      <span class="sum-pnl">매수원가 ${fmt(tr.totalCostKrw)}</span>
+    </div>
+    <div class="sum-box sum-gain">
+      <span class="sum-label">종합 수익</span>
+      <span class="sum-value ${cls(tr.totalGain)}">${sign(tr.totalGain)} <small>${sPct(tr.totalGainPct)}</small></span>
+      <span class="sum-pnl">평가 ${sign(tr.unrealizedKrw)} · 실현 ${sign(tr.realized)} · 분배금 ${fmt(tr.dividends)}</span>
+    </div>`;
+
+  if (!tr.heldList.length) {
+    grid.innerHTML = noticeMsg("보유 중인 종목이 없습니다", "거래내역상 모든 종목이 매도됐거나 잔량 0");
+    return;
+  }
+
+  const tbody = tr.heldList.map((h) => {
+    const k = cls(h.pnlKrw);
+    const tickerCell = h.ticker
+      ? `<span class="ticker">${esc(h.ticker)}</span>`
+      : `<span class="ticker tk-none">시세 매칭 안 됨</span>`;
+    return `
+      <tr>
+        <td>
+          <div class="th-name">${esc(h.name)}</div>
+          <div class="th-meta">${tickerCell}</div>
+        </td>
+        <td class="num">${h.qty.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</td>
+        <td class="num">${fmt(h.avgCostKrw)}</td>
+        <td class="num">${fmt(h.priceKrw)}</td>
+        <td class="num">${fmt(h.costKrw)}</td>
+        <td class="num">${fmt(h.evalKrw)}</td>
+        <td class="num pnl ${k}">
+          ${sign(h.pnlKrw)}<br><small>${sPct(h.pnlPct)}</small>
+        </td>
+      </tr>`;
   }).join("");
 
   grid.innerHTML = `
     <div class="sheet-wrap">
-      <table class="sheet-table">
-        <thead><tr>${thead}</tr></thead>
+      <table class="sheet-table holdings-table">
+        <thead>
+          <tr>
+            <th>종목</th>
+            <th class="num">수량</th>
+            <th class="num">평단(원)</th>
+            <th class="num">현재가(원)</th>
+            <th class="num">매수원가</th>
+            <th class="num">평가액</th>
+            <th class="num">평가손익</th>
+          </tr>
+        </thead>
         <tbody>${tbody}</tbody>
       </table>
     </div>`;
@@ -645,6 +792,13 @@ async function load() {
     portfolioCache = portfolio;
     cheongyak = cheongyakData;
     sheets = sheetsData;
+    try {
+      testReport = sheets && !sheets.__error
+        ? buildTestReport(sheets, portfolio, data) : null;
+    } catch (e) {
+      console.warn("test report 계산 실패:", e);
+      testReport = null;
+    }
     document.body.dataset.scheme = portfolio.colorScheme || "kr";
     groupNotes = portfolio.groupNotes && typeof portfolio.groupNotes === "object"
       ? portfolio.groupNotes : {};

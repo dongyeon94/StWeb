@@ -283,16 +283,16 @@ body {
 .sum-next .sum-value small { font-size: .75rem; color: var(--muted); font-weight: 600; margin-left: 4px; }
 .sum-next .sum-pnl { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 
-/* 테스트 탭 — 구글 시트 거래내역 표 */
+/* 테스트 탭 — 거래내역으로 계산한 보유 종목 표 */
 .sheet-wrap {
   grid-column: 1 / -1;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: auto;
-  max-height: 75vh;
+  max-height: 80vh;
 }
-.sheet-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.sheet-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
 .sheet-table thead th {
   position: sticky; top: 0; z-index: 1;
   background: var(--panel-2); color: var(--muted);
@@ -300,21 +300,33 @@ body {
   padding: 10px 12px; border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
+.sheet-table thead th.num { text-align: right; }
 .sheet-table tbody td {
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, .04);
-  vertical-align: top;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, .05);
+  vertical-align: middle;
   white-space: nowrap;
 }
+.sheet-table tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .sheet-table tbody tr:hover { background: rgba(255, 255, 255, .03); }
-.sheet-table tbody tr.tx-in   td:nth-child(3) { color: #58d68a; font-weight: 600; }
-.sheet-table tbody tr.tx-out  td:nth-child(3) { color: #f87171; font-weight: 600; }
-.sheet-table tbody tr.tx-buy  td:nth-child(3) { color: var(--up); font-weight: 600; }
-.sheet-table tbody tr.tx-sell td:nth-child(3) { color: var(--down); font-weight: 600; }
-.sheet-table tbody tr.tx-fx   td:nth-child(3) { color: #c4b5fd; font-weight: 600; }
+
+.holdings-table .th-name { font-weight: 600; }
+.holdings-table .th-meta { font-size: .72rem; color: var(--muted); margin-top: 2px; }
+.holdings-table .ticker.tk-none { color: #f59e0b; font-style: italic; opacity: .8; }
+.holdings-table td.pnl { font-weight: 700; }
+.holdings-table td.pnl small { display: block; font-weight: 600; opacity: .85; margin-top: 1px; }
+.holdings-table td.pnl.up { color: var(--up); }
+.holdings-table td.pnl.down { color: var(--down); }
+
+/* 종합 수익 박스 강조 */
+.sum-gain { border-color: var(--accent); }
+.sum-gain .sum-value.up { color: var(--up); }
+.sum-gain .sum-value.down { color: var(--down); }
+.sum-gain .sum-value small { font-size: .78rem; font-weight: 600; margin-left: 4px; opacity: .85; }
+
 @media (max-width: 480px) {
-  .sheet-table { font-size: .75rem; }
-  .sheet-table thead th, .sheet-table tbody td { padding: 6px 8px; }
+  .sheet-table { font-size: .76rem; }
+  .sheet-table thead th, .sheet-table tbody td { padding: 7px 8px; }
 }
 
 .foot { margin-top: 32px; text-align: center; color: var(--muted); font-size: .8rem; }
