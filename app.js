@@ -497,15 +497,16 @@ function renderCheongyak() {
     return;
   }
 
-  // 상태별 요약
+  // 상태별 요약 (마감 카운트는 안내용으로만 노출, 카드는 숨김)
   const tally = { 접수중: 0, 예정: 0, 공고중: 0, 마감: 0 };
   notices.forEach((n) => {
     tally[cheongyakStatus(n)]++;
   });
+  const activeNotices = notices.filter((n) => cheongyakStatus(n) !== "마감");
 
   // 신청시작 가장 빠른 공고 — 오늘 이후 applyStart 중 최솟값
   const today = new Date().toISOString().slice(0, 10);
-  const upcoming = notices
+  const upcoming = activeNotices
     .filter((n) => n.applyStart && n.applyStart >= today)
     .sort((a, b) => a.applyStart.localeCompare(b.applyStart))[0];
 
@@ -521,11 +522,12 @@ function renderCheongyak() {
       </div>`;
   }
 
+  const closedNote = tally.마감 ? ` · 마감 ${tally.마감} 숨김` : "";
   summary.innerHTML = `
     <div class="sum-box">
       <span class="sum-label">청약 공고</span>
-      <span class="sum-value">${notices.length}건</span>
-      <span class="sum-pnl">접수중 ${tally.접수중} · 예정 ${tally.예정} · 마감 ${tally.마감}</span>
+      <span class="sum-value">${activeNotices.length}건</span>
+      <span class="sum-pnl">접수중 ${tally.접수중} · 예정 ${tally.예정} · 공고중 ${tally.공고중}${closedNote}</span>
     </div>${nextBox}`;
 
   // 일부 출처만 실패한 경우 경고 한 줄
@@ -540,7 +542,9 @@ function renderCheongyak() {
         .join(" · ")}</p>`
     : "";
 
-  grid.innerHTML = warn + notices.map(renderNoticeCard).join("");
+  grid.innerHTML = activeNotices.length
+    ? warn + activeNotices.map(renderNoticeCard).join("")
+    : warn + noticeMsg("표시할 청약 공고가 없습니다", tally.마감 ? `마감된 공고 ${tally.마감}건만 있어 모두 숨김` : "");
 }
 
 /* ---------- 메인 ---------- */
