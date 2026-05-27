@@ -232,6 +232,48 @@ body {
 
 .cy-closed { opacity: .6; }
 
+/* 무순위(줍줍) 공고 — 강조 + 펄스 + 가벼운 시머 */
+.notice:has(.chip-extra) {
+  border: 1px solid rgba(245, 158, 11, .55);
+  border-left: 3px solid rgba(245, 158, 11, .9);
+  background: linear-gradient(135deg, rgba(245, 158, 11, .14), var(--panel) 65%);
+  position: relative;
+  overflow: hidden;
+  animation: jubjub-pulse 2.6s ease-in-out infinite;
+}
+.notice:has(.chip-extra)::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: -60%;
+  width: 55%;
+  background: linear-gradient(115deg,
+    transparent 20%,
+    rgba(255, 220, 130, .35) 50%,
+    transparent 80%);
+  animation: jubjub-shimmer 3.8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.notice:has(.chip-extra) > * { position: relative; z-index: 1; }
+.notice:has(.chip-extra) .chip-extra {
+  font-weight: 700;
+  background: rgba(245, 158, 11, .42);
+  color: #fde68a;
+  box-shadow: 0 0 10px rgba(245, 158, 11, .55);
+}
+@keyframes jubjub-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(245, 158, 11, .35), 0 0 16px rgba(245, 158, 11, .22); }
+  50%      { box-shadow: 0 0 0 1px rgba(245, 158, 11, .65), 0 0 28px rgba(245, 158, 11, .42); }
+}
+@keyframes jubjub-shimmer {
+  0%        { left: -60%; }
+  60%, 100% { left: 140%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notice:has(.chip-extra),
+  .notice:has(.chip-extra)::before { animation: none; }
+}
+
 /* 신청시작 가장 빠른 공고 강조 박스 */
 .sum-next {
   border-color: var(--accent);
