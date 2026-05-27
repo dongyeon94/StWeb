@@ -12,6 +12,7 @@ const $ = (sel) => document.querySelector(sel);
 const DEFAULT_GROUP = "일반";    // group 이 없는 보유 종목이 들어갈 기본 그룹
 const WATCH_TAB = "관심그룹";     // 직접 고른 관심 종목만 모아 보는 탭
 const CHEONGYAK_TAB = "🏠 청약";  // 부동산 청약 일정 탭
+const TEST_TAB = "🧪 테스트";     // 구글 시트 거래내역 확인용 임시 탭
 
 // 관심그룹 안에서 종목을 묶는 분류 — 이 순서대로 섹션·바로가기가 표시됩니다.
 const WATCH_KINDS = ["통화", "지수", "주식", "코인"];
@@ -24,6 +25,7 @@ let sectorGroups = []; // 섹터별 미니 카드 [{ name, cardsHtml, count }]
 let tabOrder = [];     // [WATCH_TAB, ...그룹들, CHEONGYAK_TAB]
 let currentTab = WATCH_TAB;
 let cheongyak = null;       // cheongyak.json 내용 (또는 { __error })
+let sheets = null;          // sheets.json 내용 (또는 { __error })
 let stockStatusText = "";   // 주식 탭에서 보여줄 상태줄 텍스트
 let groupNotes = {};        // { 그룹명: "탭 상단에 띄울 메모 (인라인 **bold** 지원)" }
 
@@ -201,6 +203,7 @@ function renderTabs() {
   const count = (name) =>
     name === WATCH_TAB ? watchEntries.length
     : name === CHEONGYAK_TAB ? (cheongyak?.notices?.length || 0)
+    : name === TEST_TAB ? (sheets?.rows?.length || 0)
     : entries.filter((e) => e.group === name).length;
 
   $("#tabs").innerHTML = tabOrder
@@ -224,6 +227,10 @@ function selectTab(name) {
 
   if (name === CHEONGYAK_TAB) {
     renderCheongyak();
+    return;
+  }
+  if (name === TEST_TAB) {
+    renderTest();
     return;
   }
   if (name === WATCH_TAB) {
@@ -550,19 +557,94 @@ function renderCheongyak() {
     : warn + noticeMsg("표시할 청약 공고가 없습니다", tally.마감 ? `마감된 공고 ${tally.마감}건만 있어 모두 숨김` : "");
 }
 
+/* ============================================================
+   테스트 탭 — 구글 시트 거래내역 표 렌더링
+   ============================================================ */
+
+const TX_KIND_CLASS = { 입금: "tx-in", 출금: "tx-out", 매수: "tx-buy", 매도: "tx-sell", 환전: "tx-fx" };
+
+function renderTest() {
+  const s = sheets;
+  const grid = $("#grid");
+  const summary = $("#summary");
+  const status = $("#status");
+
+  if (!s || s.__error) {
+    summary.innerHTML = "";
+    status.textContent = "구글 시트 불러오기 실패";
+    grid.innerHTML = `<article class="card card-error">
+      <p class="err-msg">구글 시트 데이터를 불러오지 못했습니다<br>
+        <small>${esc((s && s.__error) || "sheets.json 없음 — GitHub Actions 가 아직 실행되지 않았을 수 있습니다.")}</small>
+      </p>
+    </article>`;
+    return;
+  }
+
+  status.textContent = s.updatedAt
+    ? `구글 시트 기준: ${new Date(s.updatedAt).toLocaleString("ko-KR")}`
+    : "구글 시트 — 아직 수집되지 않음";
+
+  const headers = Array.isArray(s.headers) ? s.headers : [];
+  const rows = Array.isArray(s.rows) ? s.rows : [];
+
+  // 거래유형(3번째 컬럼) 별 카운트
+  const typeIdx = headers.findIndex((h) => h === "거래유형");
+  const tally = {};
+  if (typeIdx >= 0) {
+    for (const r of rows) {
+      const k = (r[typeIdx] || "").trim();
+      if (!k) continue;
+      tally[k] = (tally[k] || 0) + 1;
+    }
+  }
+  const tallyStr = Object.entries(tally)
+    .map(([k, v]) => `${esc(k)} ${v}`)
+    .join(" · ") || "—";
+
+  summary.innerHTML = `
+    <div class="sum-box">
+      <span class="sum-label">${esc(s.source?.name || "거래내역")}</span>
+      <span class="sum-value">${rows.length}건</span>
+      <span class="sum-pnl">${tallyStr}</span>
+    </div>`;
+
+  if (!rows.length) {
+    grid.innerHTML = noticeMsg("시트에 표시할 행이 없습니다", "");
+    return;
+  }
+
+  const thead = headers.map((h) => `<th>${esc(h)}</th>`).join("");
+  const tbody = rows.map((r) => {
+    const type = typeIdx >= 0 ? (r[typeIdx] || "").trim() : "";
+    const cls = TX_KIND_CLASS[type] || "";
+    const cells = headers.map((_, i) => `<td>${esc(r[i] ?? "")}</td>`).join("");
+    return `<tr class="${cls}">${cells}</tr>`;
+  }).join("");
+
+  grid.innerHTML = `
+    <div class="sheet-wrap">
+      <table class="sheet-table">
+        <thead><tr>${thead}</tr></thead>
+        <tbody>${tbody}</tbody>
+      </table>
+    </div>`;
+}
+
 /* ---------- 메인 ---------- */
 async function load() {
   const status = $("#status");
   status.textContent = "불러오는 중…";
 
   try {
-    const [portfolio, data, cheongyakData] = await Promise.all([
+    const [portfolio, data, cheongyakData, sheetsData] = await Promise.all([
       portfolioCache ? Promise.resolve(portfolioCache) : loadJson("portfolio.json"),
       loadJson("data.json"),
       loadJson("cheongyak.json").catch((e) => ({ __error: String(e.message || e) })),
+      loadJson("sheets.json").catch((e) => ({ __error: String(e.message || e) })),
     ]);
     portfolioCache = portfolio;
     cheongyak = cheongyakData;
+    sheets = sheetsData;
     document.body.dataset.scheme = portfolio.colorScheme || "kr";
     groupNotes = portfolio.groupNotes && typeof portfolio.groupNotes === "object"
       ? portfolio.groupNotes : {};
@@ -623,8 +705,8 @@ async function load() {
       });
     }
 
-    // 관심그룹 → 보유 그룹 탭들 → 청약 일정 탭 순서로 배치합니다.
-    tabOrder = [WATCH_TAB, ...groups, CHEONGYAK_TAB];
+    // 관심그룹 → 보유 그룹 탭들 → 청약 일정 탭 → 테스트(구글시트) 탭 순서로 배치.
+    tabOrder = [WATCH_TAB, ...groups, CHEONGYAK_TAB, TEST_TAB];
     if (!tabOrder.includes(currentTab)) currentTab = WATCH_TAB;
 
     renderTabs();

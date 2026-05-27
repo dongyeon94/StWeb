@@ -283,6 +283,40 @@ body {
 .sum-next .sum-value small { font-size: .75rem; color: var(--muted); font-weight: 600; margin-left: 4px; }
 .sum-next .sum-pnl { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 
+/* 테스트 탭 — 구글 시트 거래내역 표 */
+.sheet-wrap {
+  grid-column: 1 / -1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: auto;
+  max-height: 75vh;
+}
+.sheet-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.sheet-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel-2); color: var(--muted);
+  font-weight: 600; text-align: left;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.sheet-table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, .04);
+  vertical-align: top;
+  white-space: nowrap;
+}
+.sheet-table tbody tr:hover { background: rgba(255, 255, 255, .03); }
+.sheet-table tbody tr.tx-in   td:nth-child(3) { color: #58d68a; font-weight: 600; }
+.sheet-table tbody tr.tx-out  td:nth-child(3) { color: #f87171; font-weight: 600; }
+.sheet-table tbody tr.tx-buy  td:nth-child(3) { color: var(--up); font-weight: 600; }
+.sheet-table tbody tr.tx-sell td:nth-child(3) { color: var(--down); font-weight: 600; }
+.sheet-table tbody tr.tx-fx   td:nth-child(3) { color: #c4b5fd; font-weight: 600; }
+@media (max-width: 480px) {
+  .sheet-table { font-size: .75rem; }
+  .sheet-table thead th, .sheet-table tbody td { padding: 6px 8px; }
+}
+
 .foot { margin-top: 32px; text-align: center; color: var(--muted); font-size: .8rem; }
 .foot code { background: var(--panel-2); padding: 2px 6px; border-radius: 5px; }
 

@@ -39,6 +39,12 @@ jobs:
       - name: 시세 데이터 받기
         run: node scripts/fetch-stocks.mjs
 
+      # ── 구글 시트 거래내역(테스트 탭) ─────────────────────────────
+      # 공개 시트 CSV export 라 별도 인증 불필요. 실패해도 빌드는 진행.
+      - name: 구글 시트 받기
+        run: node scripts/fetch-sheets.mjs
+        continue-on-error: true
+
       # ── 청약 일정: 한국 기준 하루 2회(오전 10시·오후 3시)만 갱신 ────
       # 주식과 달리 청약 공고는 자주 안 바뀌므로 매 실행마다 받지 않습니다.
       # cheongyak.json 을 캐시에 보관해 두고, 갱신이 필요할 때만 새로 받습니다.
@@ -97,6 +103,8 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html style.css app.js portfolio.json data.json cheongyak.json _site/
+          # sheets.json 은 fetch 실패 시 없을 수 있어 있을 때만 복사
+          [ -f sheets.json ] && cp sheets.json _site/ || true
 
       - name: Pages 설정
         uses: actions/configure-pages@v5
