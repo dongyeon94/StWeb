@@ -566,9 +566,13 @@ function renderCheongyak() {
 // - 평단(원화) = 누적 매수 정산금액(원) / 누적 보유 수량
 // - 평가손익(원) = (현재가 × 수량) - 누적 매수 정산금액
 // - 외화 종목은 현재가에 USD/KRW 환율을 곱해 원화로 환산 (FX 영향까지 손익에 반영)
+// - 종목명→ticker 매핑은 시트의 '티커' 탭 우선. 시트에 없는 종목은 패스(=보유 안 함으로 간주).
 function buildTestReport(sheetsData, portfolio, data) {
-  const headers = Array.isArray(sheetsData?.headers) ? sheetsData.headers : [];
-  const rows = Array.isArray(sheetsData?.rows) ? sheetsData.rows : [];
+  // sheets.json 구조: { transactions: { headers, rows }, tickers: [{name, ticker, currency}] }
+  //   하위 호환: 옛 구조({ headers, rows }) 도 처리
+  const txs = sheetsData?.transactions ?? sheetsData;
+  const headers = Array.isArray(txs?.headers) ? txs.headers : [];
+  const rows = Array.isArray(txs?.rows) ? txs.rows : [];
   if (!headers.length) return null;
 
   const col = (name) => headers.indexOf(name);
@@ -625,32 +629,36 @@ function buildTestReport(sheetsData, portfolio, data) {
     // 환전: 통화만 바꾸고 평가에 영향 없음 — 무시
   }
 
-  // 종목명 → ticker 맵 (보유·관심·섹터에서 모두 수집)
+  // 종목명 → ticker 맵 — 시트의 '티커' 탭이 권위. 시트에 없으면 보유 평가에서 제외.
   const nameToTicker = new Map();
-  const collect = (arr, kProp = "name") => {
-    for (const it of arr || []) {
-      if (it[kProp] && it.ticker && !nameToTicker.has(it[kProp])) {
-        nameToTicker.set(it[kProp], it.ticker);
-      }
-    }
-  };
-  collect(portfolio?.holdings);
-  collect(portfolio?.watchlist);
-  for (const s2 of portfolio?.sectors || []) collect(s2.items);
+  for (const t of sheetsData?.tickers || []) {
+    if (t.name && t.ticker) nameToTicker.set(t.name, t.ticker);
+  }
 
-  const fx = data?.quotes?.["KRW=X"]?.price || null;   // USD → KRW
+  // 외화 → 원화 환산 (watchlist 의 환율 종목에서 자동 조회)
+  const fxRates = {
+    USD: data?.quotes?.["KRW=X"]?.price || null,    // USD/KRW
+    JPY: data?.quotes?.["JPYKRW=X"]?.price || null, // JPY/KRW
+    EUR: data?.quotes?.["EURKRW=X"]?.price || null, // EUR/KRW
+  };
+  const toKrw = (price, currency) => {
+    if (price == null) return null;
+    if (currency === "KRW") return price;
+    const rate = fxRates[currency];
+    return rate ? price * rate : null;
+  };
 
   const heldList = [];
   let totalCostKrw = 0, totalEvalKrw = 0;
 
   for (const [name, p] of positions) {
     if (p.qty < 1e-6) continue;
-    const ticker = nameToTicker.get(name) || null;
-    const q = ticker ? data?.quotes?.[ticker] : null;
-    let priceKrw = null;
-    if (q && typeof q.price === "number") {
-      priceKrw = q.currency === "USD" && fx ? q.price * fx : q.price;
-    }
+    const ticker = nameToTicker.get(name);
+    // 시트 티커 탭에 없는 종목은 '현재 보유 종목 아님'으로 간주하고 스킵
+    if (!ticker) continue;
+
+    const q = data?.quotes?.[ticker];
+    const priceKrw = q ? toKrw(q.price, q.currency) : null;
     const avgCostKrw = p.totalCostKrw / p.qty;
     const evalKrw = priceKrw != null ? priceKrw * p.qty : null;
     const pnlKrw = evalKrw != null ? evalKrw - p.totalCostKrw : null;

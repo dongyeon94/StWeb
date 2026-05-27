@@ -134,6 +134,19 @@ const dailyTickers = [
     ].filter(Boolean)
   ),
 ];
+
+// 구글 시트 티커 매핑(sheets.json)도 일봉 fetch 대상에 추가 — 테스트 탭의 보유 평가용.
+// 시트가 없거나 파싱 실패하면 무시. 야후가 모르는 심볼은 자연스럽게 FAIL 로 표시.
+try {
+  const sheetsRaw = await readFile(new URL("sheets.json", root), "utf8");
+  const sheetsJson = JSON.parse(sheetsRaw);
+  for (const t of sheetsJson.tickers || []) {
+    if (t.ticker && !dailyTickers.includes(t.ticker)) {
+      dailyTickers.push(t.ticker);
+    }
+  }
+} catch { /* sheets.json 없음 — 무시 */ }
+
 const weeklyTickers = [
   ...new Set(
     (portfolio.sectors || [])
