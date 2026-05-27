@@ -159,7 +159,7 @@ function absLhUrl(u) {
 }
 
 function mapLh(r) {
-  const type = r.AIS_TP_CD_NM || r.UPP_AIS_TP_NM || r.PAN_NM || "";
+  // 사전 필터(isLhResidentialSale)로 주택 분양만 통과시켰으므로 kind 는 항상 '분양'.
   // LH 응답은 데이터 종류·시기마다 필드명이 달라 가능한 후보를 다 시도합니다.
   const applyStart =
     r.RCEPT_BGN_DT || r.RCEP_BGN_DT || r.RCEPT_BGNDE ||
@@ -169,7 +169,7 @@ function mapLh(r) {
     r.SBSCRP_RCEPT_END_DT || r.APLY_END_DT || "";
   return {
     source: "LH",
-    kind: /분양/.test(type) && !/임대/.test(type) ? "분양" : "임대",
+    kind: "분양",
     name: r.PAN_NM || "(이름 없음)",
     region: r.CNP_CD_NM || r.AISTC || "",
     address: "",
@@ -181,31 +181,53 @@ function mapLh(r) {
   };
 }
 
+// LH 응답엔 토지·상가·임대주택·주거복지 등 잡다한 카테고리가 섞여 들어와
+// 100건 상한을 다 잡아먹습니다. 주택 분양(분양주택·공공분양 신혼희망)만 통과시켜
+// 화면에 의미 있는 공고가 보이도록 합니다. 행복주택·임대성 항목은 제외.
+function isLhResidentialSale(r) {
+  const upp = r.UPP_AIS_TP_NM || "";
+  const ais = r.AIS_TP_CD_NM || "";
+  if (/임대|행복주택/.test(ais)) return false;
+  return upp === "분양주택" || /^공공분양/.test(upp);
+}
+
 async function fetchLh() {
   const base =
     "http://apis.data.go.kr/B552555/lhLeaseNoticeInfo1/lhLeaseNoticeInfo1";
-  const url = `${base}?serviceKey=${svcKey()}&PG_SZ=100&PAGE=1`;
-  const json = await getJson(url);
+  const PG_SZ = 200;
+  const MAX_PAGES = 3;            // 최대 600건까지 훑기 — 분양 공고가 뒤쪽에 묻혀 있을 수 있음
 
-  // 응답 구조에서 dsList(공고 목록)와 resHeader(처리결과) 추출
-  let list = [];
-  let header = null;
-  if (Array.isArray(json)) {
-    list = json.find((p) => Array.isArray(p?.dsList))?.dsList || [];
-    header = json.find((p) => p?.resHeader)?.resHeader;
-  } else if (json && typeof json === "object") {
-    list = Array.isArray(json.dsList) ? json.dsList : [];
-    header = json.resHeader;
+  const all = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const url = `${base}?serviceKey=${svcKey()}&PG_SZ=${PG_SZ}&PAGE=${page}`;
+    const json = await getJson(url);
+
+    let list = [];
+    let header = null;
+    if (Array.isArray(json)) {
+      list = json.find((p) => Array.isArray(p?.dsList))?.dsList || [];
+      header = json.find((p) => p?.resHeader)?.resHeader;
+    } else if (json && typeof json === "object") {
+      list = Array.isArray(json.dsList) ? json.dsList : [];
+      header = json.resHeader;
+    }
+
+    const rc = Array.isArray(header) ? header[0]?.RS_CD : header?.RS_CD;
+    if (rc && rc !== "00") {
+      // 첫 페이지 실패는 진짜 오류, 뒷 페이지 실패는 무시하고 모인 만큼 사용
+      if (page === 1) {
+        const rn = Array.isArray(header) ? header[0]?.RS_NM : header?.RS_NM;
+        throw new Error(rn || `LH 응답코드 ${rc}`);
+      }
+      break;
+    }
+    if (!Array.isArray(list) || list.length === 0) break;
+    all.push(...list);
+    if (list.length < PG_SZ) break;
+    await sleep(300);
   }
 
-  const rc = Array.isArray(header) ? header[0]?.RS_CD : header?.RS_CD;
-  if (rc && rc !== "00") {
-    const rn = Array.isArray(header) ? header[0]?.RS_NM : header?.RS_NM;
-    throw new Error(rn || `LH 응답코드 ${rc}`);
-  }
-  if (!Array.isArray(list)) throw new Error("예상치 못한 응답");
-
-  return list.map(mapLh);
+  return all.filter(isLhResidentialSale).map(mapLh);
 }
 
 /* ---------- 상태 판정 / 정렬 ---------- */
