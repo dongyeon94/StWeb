@@ -497,12 +497,15 @@ function renderCheongyak() {
     return;
   }
 
+  // 임대(LH 등) 공고는 조건상 해당 없음 — 카드·집계에서 모두 제외
+  const eligible = notices.filter((n) => n.kind !== "임대");
+
   // 상태별 요약 (마감 카운트는 안내용으로만 노출, 카드는 숨김)
   const tally = { 접수중: 0, 예정: 0, 공고중: 0, 마감: 0 };
-  notices.forEach((n) => {
+  eligible.forEach((n) => {
     tally[cheongyakStatus(n)]++;
   });
-  const activeNotices = notices.filter((n) => cheongyakStatus(n) !== "마감");
+  const activeNotices = eligible.filter((n) => cheongyakStatus(n) !== "마감");
 
   // 신청시작 가장 빠른 공고 — 오늘 이후 applyStart 중 최솟값
   const today = new Date().toISOString().slice(0, 10);
