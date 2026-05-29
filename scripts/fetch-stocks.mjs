@@ -125,11 +125,16 @@ async function fetchInto(map, list, chart, label) {
 
 const portfolio = JSON.parse(await readFile(new URL("portfolio.json", root), "utf8"));
 
-// 관심그룹(watchlist)·보유 종목(holdings) → 일봉, 섹터(sectors) → 주봉
+// 관심그룹 분류 중 '주식'·'코인'만 일봉(전일 대비), 나머지(통화·지수 등)는 주봉(주간 대비).
+const DAILY_KINDS = ["주식", "코인"];
+const watchDaily = (portfolio.watchlist || []).filter((w) => DAILY_KINDS.includes(w.kind));
+const watchWeekly = (portfolio.watchlist || []).filter((w) => !DAILY_KINDS.includes(w.kind));
+
+// 일봉: 관심그룹(주식·코인) + 보유 종목
 const dailyTickers = [
   ...new Set(
     [
-      ...(portfolio.watchlist || []).map((w) => w.ticker),
+      ...watchDaily.map((w) => w.ticker),
       ...(portfolio.holdings || []).map((h) => h.ticker),
     ].filter(Boolean)
   ),
@@ -147,23 +152,29 @@ try {
   }
 } catch { /* sheets.json 없음 — 무시 */ }
 
-const weeklyTickers = [
+// 섹터 종목 — 주봉 + 10시 앵커 등락률 적용 대상
+const sectorTickers = [
   ...new Set(
     (portfolio.sectors || [])
       .flatMap((s) => (s.items || []).map((it) => it.ticker))
       .filter(Boolean)
   ),
 ];
+// 관심그룹 주봉 종목(통화·지수 등) — 일반 주봉 등락(지난주 종가 대비), 10시 앵커는 적용 안 함
+const weeklyWatchTickers = [...new Set(watchWeekly.map((w) => w.ticker).filter(Boolean))];
+// 주봉으로 받을 전체 티커 (섹터 + 관심그룹 주봉)
+const weeklyTickers = [...new Set([...sectorTickers, ...weeklyWatchTickers])];
 
-const quotes = {};   // 일봉 — 관심그룹·보유 종목
-const weekly = {};   // 주봉 — 섹터 종목
+const quotes = {};   // 일봉 — 관심그룹(주식·코인) · 보유 종목
+const weekly = {};   // 주봉 — 섹터 · 관심그룹(통화·지수 등)
 
 await fetchInto(quotes, dailyTickers, DAILY, "일봉");
 await fetchInto(weekly, weeklyTickers, WEEKLY, "주봉");
 
 // 섹터 등락률 = 오늘 10시 ↔ 7일 전 10시. 스파크라인 마지막 점도 10시 스냅샷으로 맞춰
 // 차트 끝과 카드 표시가가 일치하도록 합니다. 10시 막대를 못 찾으면 주봉 fallback 유지.
-for (const ticker of weeklyTickers) {
+// (관심그룹 주봉 종목에는 적용 안 함 — 일반 주간 등락 그대로.)
+for (const ticker of sectorTickers) {
   const w = weekly[ticker];
   if (!w || w.error) continue;
   try {

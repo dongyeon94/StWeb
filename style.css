@@ -329,6 +329,18 @@ body {
   .sheet-table thead th, .sheet-table tbody td { padding: 7px 8px; }
 }
 
+/* 관심그룹 주봉 종목(통화·지수)의 '주간' 배지 */
+.period-badge {
+  margin-left: 6px;
+  font-size: .62rem; font-weight: 700;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  vertical-align: middle;
+}
+
 .foot { margin-top: 32px; text-align: center; color: var(--muted); font-size: .8rem; }
 .foot code { background: var(--panel-2); padding: 2px 6px; border-radius: 5px; }
 
