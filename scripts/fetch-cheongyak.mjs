@@ -26,7 +26,7 @@ const KEY = (process.env.DATA_GO_KR_KEY || process.env.CHEONGYAK_API_KEY || "").
 const root = new URL("../", import.meta.url);
 const OUT = new URL("cheongyak.json", root);
 
-const LOOKBACK_DAYS = 90;   // 최근 N일 안에 난 모집공고까지 표시
+const LOOKBACK_DAYS = 60;   // 최근 N일 안에 난 모집공고까지 표시 (진행 중 공고는 기간 무관 포함)
 const MAX_NOTICES = 100;    // 화면에 너무 많지 않도록 상한
 
 /* ---------- 공통 유틸 ---------- */
