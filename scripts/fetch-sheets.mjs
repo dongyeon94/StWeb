@@ -1,17 +1,26 @@
 // ============================================================
-//  구글 시트 — 거래내역 + 티커 매핑 수집 (테스트 탭용)
+//  구글 시트 — 계좌별 거래내역 + 티커 매핑 수집 (테스트 탭용)
 //
 //  공개 시트의 CSV export 를 받아 sheets.json 으로 저장합니다.
 //  '링크가 있는 모든 사용자에게 보기 허용' 으로 공유돼 있어야 동작합니다.
+//
+//  계좌 탭(종합·ISA·연금저축)은 각각 거래내역이고, '필요 티커' 탭이
+//  종목명 ↔ 야후 티커 매핑 소스입니다. 매핑이 없는 보유 종목은 앱이
+//  '필요 티커' 목록으로 보여줘서 사용자가 시트에 채워 넣게 합니다.
 //
 //  로컬 실행:  node scripts/fetch-sheets.mjs
 // ============================================================
 
 import { writeFile } from "node:fs/promises";
 
-const SHEET_ID = "18y9OJnkAqVZ5W9grL5diRQrloD2bXl-CsT1JuC2WKLU";
-const TX_GID = "1870356595";   // 거래내역 탭
-const TK_GID = "1784159560";   // 티커 탭 (종목명 ↔ 야후 티커 매핑)
+const SHEET_ID = "1JXCFGpgqZX0cwCvMrA9jaO1dWqNaiQNjtLVOfCKxNpA";
+// 계좌 탭 — 각 탭이 하나의 거래내역. 섹션으로 묶어 보여줍니다.
+const ACCOUNTS = [
+  { key: "종합", label: "종합",     gid: "0" },
+  { key: "isa",  label: "ISA",      gid: "1094025677" },
+  { key: "연금", label: "연금저축", gid: "2068601321" },
+];
+const TK_GID = "545533008";   // 필요 티커 탭 (종목명 ↔ 야후 티커 매핑)
 
 const root = new URL("../", import.meta.url);
 
@@ -91,26 +100,42 @@ function parseTickerSheet(rows) {
   return tickers;
 }
 
-const txRows = await fetchCsv(TX_GID, "거래내역");
-const tkRows = await fetchCsv(TK_GID, "티커");
+// 계좌 탭 각각 수집 — 빈 탭(거래 없음)은 빈 거래내역으로 저장하고 넘어감
+const accounts = [];
+for (const a of ACCOUNTS) {
+  let rows = [];
+  try {
+    rows = await fetchCsv(a.gid, a.label);
+  } catch (e) {
+    console.log(`WARN  ${a.label} 받기 실패: ${e.message || e}`);
+  }
+  const headers = rows.length ? rows[0] : [];
+  const data = rows.length ? rows.slice(1) : [];
+  accounts.push({ key: a.key, label: a.label, transactions: { headers, rows: data } });
+  console.log(`      ${a.label}: ${data.length}행`);
+}
 
-if (!txRows.length) {
-  console.log("FAIL  거래내역 비어 있음");
+const tkRows = await fetchCsv(TK_GID, "필요 티커").catch(() => []);
+const tickers = parseTickerSheet(tkRows);
+
+const totalRows = accounts.reduce((s, a) => s + a.transactions.rows.length, 0);
+if (!totalRows) {
+  console.log("FAIL  모든 계좌 거래내역이 비어 있음");
   process.exit(1);
 }
 
-const txHeaders = txRows[0];
-const txData = txRows.slice(1);
-const tickers = parseTickerSheet(tkRows);
-
 const out = {
   updatedAt: new Date().toISOString(),
-  source: { sheetId: SHEET_ID, txGid: TX_GID, tickerGid: TK_GID },
-  transactions: { headers: txHeaders, rows: txData },
+  source: {
+    sheetId: SHEET_ID,
+    accounts: ACCOUNTS.map(({ key, label, gid }) => ({ key, label, gid })),
+    tickerGid: TK_GID,
+  },
+  accounts,
   tickers,
 };
 
 await writeFile(new URL("sheets.json", root), JSON.stringify(out, null, 2) + "\n");
 console.log(
-  `\nOK    거래내역 ${txData.length}행 · 티커 매핑 ${tickers.length}개 (${tickers.map((t) => t.ticker).filter(Boolean).slice(0, 6).join(", ")} …)`
+  `\nOK    거래내역 ${totalRows}행(${accounts.map((a) => `${a.label} ${a.transactions.rows.length}`).join(", ")}) · 티커 매핑 ${tickers.length}개`
 );

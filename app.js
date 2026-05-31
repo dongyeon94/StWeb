@@ -210,7 +210,7 @@ function renderTabs() {
   const count = (name) =>
     name === WATCH_TAB ? watchEntries.length
     : name === CHEONGYAK_TAB ? (cheongyak?.notices?.length || 0)
-    : name === TEST_TAB ? (sheets?.rows?.length || 0)
+    : name === TEST_TAB ? (testReport?.sections?.length || 0)
     : entries.filter((e) => e.group === name).length;
 
   $("#tabs").innerHTML = tabOrder
@@ -568,78 +568,151 @@ function renderCheongyak() {
    테스트 탭 — 구글 시트 거래내역으로 현재 보유·손익 계산
    ============================================================ */
 
-// 시트 거래내역을 시간순으로 누적해서 현재 보유 종목과 손익 리포트를 만듭니다.
-// - 평단(원화) = 누적 매수 정산금액(원) / 누적 보유 수량
-// - 평가손익(원) = (현재가 × 수량) - 누적 매수 정산금액
-// - 외화 종목은 현재가에 USD/KRW 환율을 곱해 원화로 환산 (FX 영향까지 손익에 반영)
-// - 종목명→ticker 매핑은 시트의 '티커' 탭 우선. 시트에 없는 종목은 패스(=보유 안 함으로 간주).
-function buildTestReport(sheetsData, portfolio, data) {
-  // sheets.json 구조: { transactions: { headers, rows }, tickers: [{name, ticker, currency}] }
-  //   하위 호환: 옛 구조({ headers, rows }) 도 처리
-  const txs = sheetsData?.transactions ?? sheetsData;
+const txNum = (v) => {
+  if (v == null) return 0;
+  const c = String(v).replace(/[₩,\s]/g, "");
+  const n = parseFloat(c);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// 한 계좌(거래내역 탭)를 시간순으로 누적해서 보유 포지션과 현금흐름을 구합니다.
+// - 현재 수량은 시트의 '잔고'(브로커 보유 수량)가 권위. 거래 replay 는 평단 산출용.
+//   (대체입출고·타사대체·액면병합 등으로 replay 수량이 어긋나도 잔고가 실제 보유.)
+// - 평단(원화) = replay 누적 원가 / replay 누적 수량 → 잔고 수량에 곱해 보유 원가 산출.
+// - 해외 거래(상세내용에 '외화'·'해외')는 정산금액·단가가 외화(USD/JPY)라, 행의 'USD'/'JPY'
+//   환율 열로 원화 환산해 원가에 반영. 환율 변동까지 원가에 녹습니다.
+// - 종목 통화는 currencyOf(종목명) 으로 판별 (필요 티커 탭의 국가 열·티커 .T 접미사 기준,
+//   모르면 USD 가정). 미국주는 USD 열, 일본주는 JPY 열을 사용.
+function accumulateAccount(txs, currencyOf) {
   const headers = Array.isArray(txs?.headers) ? txs.headers : [];
   const rows = Array.isArray(txs?.rows) ? txs.rows : [];
-  if (!headers.length) return null;
-
-  const col = (name) => headers.indexOf(name);
   const idx = {
-    type: col("거래유형"),
-    detail: col("상세내용"),
-    name: col("종목명"),
-    qty: col("수량"),
-    // '정산금액' 컬럼은 시트에 두 개(원본 통화 / 원화) — 마지막(원화)을 사용
-    amountKrw: headers.lastIndexOf("정산금액"),
+    type: headers.indexOf("거래유형"),
+    detail: headers.indexOf("상세내용"),
+    name: headers.indexOf("종목명"),
+    qty: headers.indexOf("수량"),
+    price: headers.indexOf("단가"),
+    // '정산금액' 이 여러 개면 마지막을 사용
+    amount: headers.lastIndexOf("정산금액"),
+    bal: headers.indexOf("잔고"),  // 종목별 브로커 보유 잔고 (현재 수량의 권위)
+    usd: headers.indexOf("USD"),   // 행별 USD/KRW 환율 (없으면 -1)
+    jpy: headers.indexOf("JPY"),   // 행별 JPY/KRW 환율 (없으면 -1)
   };
 
-  const num = (v) => {
-    if (v == null) return 0;
-    const c = String(v).replace(/[₩,\s]/g, "");
-    const n = parseFloat(c);
-    return Number.isFinite(n) ? n : 0;
-  };
-
-  // 시트는 최신순. 시간순 누적을 위해 뒤집어서 순회.
-  const chronological = [...rows].reverse();
-
-  const positions = new Map();   // 종목명 → { qty, totalCostKrw }
+  const replay = new Map();      // 종목명 → { qty, totalCostKrw } (평단 산출용)
+  const latestBal = new Map();   // 종목명 → 최신 잔고 (수량 있는 행 기준)
   let cashIn = 0, cashOut = 0, dividends = 0, realized = 0;
+  if (!headers.length) return { positions: new Map(), cashIn, cashOut, dividends, realized };
 
-  for (const r of chronological) {
+  // 시트는 최신순. 시간순 누적을 위해 뒤집어서 순회 → 마지막에 쓴 잔고가 최신.
+  for (const r of [...rows].reverse()) {
     const type = (r[idx.type] || "").trim();
     const detail = (r[idx.detail] || "").trim();
     const name = (r[idx.name] || "").trim();
-    const qty = num(r[idx.qty]);
-    const amt = num(r[idx.amountKrw]);
+    const qty = txNum(r[idx.qty]);
+    if (name && qty !== 0 && idx.bal >= 0) latestBal.set(name, txNum(r[idx.bal]));
+
+    // 해외(외화) 거래면 정산금액·단가를 종목 통화의 행별 환율로 원화 환산
+    const isForeign = /외화|해외/.test(detail);
+    let fx = 1;
+    if (isForeign) {
+      const cur = (currencyOf && currencyOf(name)) || "USD";
+      const col = cur === "JPY" ? idx.jpy : idx.usd;
+      const rate = col >= 0 ? txNum(r[col]) : 0;
+      if (rate > 0) fx = rate;
+    }
+    const amtKrw = txNum(r[idx.amount]) * fx;            // 정산금액(원화 환산)
+    const unitKrw = txNum(r[idx.price]) * fx;            // 단가(원화 환산)
+
+    const sellFrom = (p, q) => {                          // 평단 유지하며 수량 차감
+      const avg = p.totalCostKrw / p.qty;
+      const sq = Math.min(q, p.qty);
+      p.qty -= sq;
+      p.totalCostKrw -= avg * sq;
+      if (p.qty < 1e-6) replay.delete(name);
+      return { avg, sq };
+    };
 
     if (type === "입금") {
-      if (/분배금/.test(detail)) dividends += amt;
-      else if (/이체/.test(detail)) cashIn += amt;
-      // 대체입금·외화단수주매각대금 등은 손익 집계에서 제외
+      if (/분배금/.test(detail)) dividends += amtKrw;
+      else if (/이체/.test(detail)) cashIn += amtKrw;
+      // 대체입금·공모주환불금·예탁금이용료·외화단수주매각대금 등은 순 투자금 집계에서 제외
     } else if (type === "출금") {
-      if (/이체/.test(detail)) cashOut += amt;
+      if (/이체/.test(detail)) cashOut += amtKrw;
+      // 공모주청약수수료 등 그 외 출금은 제외
     } else if (type === "매수" && name && qty > 0) {
-      const p = positions.get(name) || { qty: 0, totalCostKrw: 0 };
+      const p = replay.get(name) || { qty: 0, totalCostKrw: 0 };
       p.qty += qty;
-      p.totalCostKrw += amt;
-      positions.set(name, p);
+      p.totalCostKrw += amtKrw;
+      replay.set(name, p);
     } else if (type === "매도" && name && qty > 0) {
-      const p = positions.get(name);
+      const p = replay.get(name);
       if (!p || p.qty < 1e-6) continue;
-      const avgCost = p.totalCostKrw / p.qty;
-      const sellQty = Math.min(qty, p.qty);
-      realized += amt - avgCost * sellQty;
-      p.qty -= sellQty;
-      p.totalCostKrw -= avgCost * sellQty;
-      if (p.qty < 1e-6) positions.delete(name);
+      const { avg, sq } = sellFrom(p, qty);
+      realized += amtKrw - avg * sq;
+    } else if (type === "입고" && isForeign && name && qty > 0) {
+      // 외화주식 액면병합 입고 등 — 단가 기준으로 원가 편입
+      const p = replay.get(name) || { qty: 0, totalCostKrw: 0 };
+      p.qty += qty;
+      p.totalCostKrw += unitKrw * qty;
+      replay.set(name, p);
+    } else if (type === "출고" && isForeign && name && qty > 0) {
+      // 외화주식 액면병합 출고 등 — 평단 유지하며 수량만 제거 (매도 손익 아님)
+      const p = replay.get(name);
+      if (p && p.qty >= 1e-6) sellFrom(p, qty);
     }
-    // 환전: 통화만 바꾸고 평가에 영향 없음 — 무시
+    // 환전·대체입출고(국내) 등 그 외는 평가에 영향 없음 — 무시
   }
 
-  // 종목명 → ticker 맵 — 시트의 '티커' 탭이 권위. 시트에 없으면 보유 평가에서 제외.
+  // 잔고(권위)로 현재 보유 확정. 평단은 replay 에서 가져와 잔고 수량에 곱함.
+  // 잔고 정보가 없는 옛 시트(잔고 열 없음)는 replay 결과를 그대로 사용.
+  const positions = new Map();
+  if (idx.bal < 0) {
+    for (const [name, p] of replay) if (p.qty > 1e-6) positions.set(name, p);
+  } else {
+    for (const [name, bal] of latestBal) {
+      if (!(bal > 1e-6)) continue;            // 잔고 0 이하 = 보유 아님
+      const p = replay.get(name);
+      const avgUnit = p && p.qty > 1e-6 ? p.totalCostKrw / p.qty : null;
+      positions.set(name, {
+        qty: bal,
+        totalCostKrw: avgUnit != null ? avgUnit * bal : null,
+      });
+    }
+  }
+  return { positions, cashIn, cashOut, dividends, realized };
+}
+
+// 시트의 계좌별 거래내역을 누적해서 섹션별 + 종합 손익 리포트를 만듭니다.
+// - 종목명→ticker 매핑은 시트의 '필요 티커' 탭이 권위.
+// - 매핑이 없는 보유 종목은 평가에서 빼고 '필요 티커' 목록으로 따로 모읍니다.
+function buildTestReport(sheetsData, portfolio, data) {
+  // sheets.json 구조: { accounts: [{key,label,transactions:{headers,rows}}], tickers: [...] }
+  //   하위 호환: 옛 구조({ transactions:{...} } / { headers, rows }) 는 단일 계좌로 처리
+  let accounts = Array.isArray(sheetsData?.accounts) ? sheetsData.accounts : null;
+  if (!accounts) {
+    const txs = sheetsData?.transactions ?? sheetsData;
+    if (!Array.isArray(txs?.headers)) return null;
+    accounts = [{ key: "계좌", label: "계좌", transactions: txs }];
+  }
+
+  // 종목명 → ticker 맵 — '필요 티커' 탭. 비어 있으면 모든 보유가 '필요 티커' 로 빠짐.
   const nameToTicker = new Map();
+  const nameToCurrency = new Map();
   for (const t of sheetsData?.tickers || []) {
     if (t.name && t.ticker) nameToTicker.set(t.name, t.ticker);
+    if (t.name && t.currency) nameToCurrency.set(t.name, t.currency);
   }
+
+  // 종목 통화 판별 (외화 거래 환율 열 선택용): 필요 티커 탭의 국가 열 > 티커 .T 접미사 > USD
+  const currencyOf = (name) => {
+    const cur = nameToCurrency.get(name) || "";
+    if (/jp|일본|엔|jpy/i.test(cur)) return "JPY";
+    if (/us|미국|usd|달러/i.test(cur)) return "USD";
+    const tk = nameToTicker.get(name) || "";
+    if (/\.(T|JP)$/i.test(tk)) return "JPY";
+    return "USD";
+  };
 
   // 외화 → 원화 환산 (watchlist 의 환율 종목에서 자동 조회)
   const fxRates = {
@@ -654,45 +727,98 @@ function buildTestReport(sheetsData, portfolio, data) {
     return rate ? price * rate : null;
   };
 
-  const heldList = [];
-  let totalCostKrw = 0, totalEvalKrw = 0;
+  const sections = [];
+  const need = new Map();   // 종목명 → { name, qty, costKrw, accounts:Set }
 
-  for (const [name, p] of positions) {
-    if (p.qty < 1e-6) continue;
-    const ticker = nameToTicker.get(name);
-    // 시트 티커 탭에 없는 종목은 '현재 보유 종목 아님'으로 간주하고 스킵
-    if (!ticker) continue;
+  // 종합(전체) 집계 누적
+  const total = {
+    cashIn: 0, cashOut: 0, dividends: 0, realized: 0,
+    totalCostKrw: 0, totalEvalKrw: 0,
+  };
 
-    const q = data?.quotes?.[ticker];
-    const priceKrw = q ? toKrw(q.price, q.currency) : null;
-    const avgCostKrw = p.totalCostKrw / p.qty;
-    const evalKrw = priceKrw != null ? priceKrw * p.qty : null;
-    const pnlKrw = evalKrw != null ? evalKrw - p.totalCostKrw : null;
-    const pnlPct = pnlKrw != null && p.totalCostKrw > 0
-      ? (pnlKrw / p.totalCostKrw) * 100 : null;
+  for (const acc of accounts) {
+    const { positions, cashIn, cashOut, dividends, realized } =
+      accumulateAccount(acc.transactions, currencyOf);
 
-    heldList.push({
-      name, ticker, qty: p.qty,
-      avgCostKrw, priceKrw,
-      costKrw: p.totalCostKrw, evalKrw,
-      pnlKrw, pnlPct,
+    const heldList = [];
+    let secCostKrw = 0, secEvalKrw = 0;
+
+    for (const [name, p] of positions) {
+      if (p.qty < 1e-6) continue;
+      const ticker = nameToTicker.get(name);
+      const costKrw = p.totalCostKrw;                       // null 가능 (평단 미상)
+      const avgCostKrw = costKrw != null ? costKrw / p.qty : null;
+
+      if (!ticker) {
+        // '필요 티커' 탭에 없는 종목 — 평가는 못 하지만 보유 사실은 보여줌
+        const e = need.get(name) || { name, qty: 0, costKrw: 0, accounts: new Set() };
+        e.qty += p.qty;
+        e.costKrw += costKrw || 0;
+        e.accounts.add(acc.label);
+        need.set(name, e);
+        heldList.push({
+          name, ticker: null, qty: p.qty, avgCostKrw, priceKrw: null,
+          costKrw, evalKrw: null, pnlKrw: null, pnlPct: null,
+        });
+        continue;
+      }
+
+      const q = data?.quotes?.[ticker];
+      const priceKrw = q ? toKrw(q.price, q.currency) : null;
+      const evalKrw = priceKrw != null ? priceKrw * p.qty : null;
+      const pnlKrw = evalKrw != null && costKrw != null ? evalKrw - costKrw : null;
+      const pnlPct = pnlKrw != null && costKrw > 0 ? (pnlKrw / costKrw) * 100 : null;
+
+      heldList.push({
+        name, ticker, qty: p.qty, avgCostKrw, priceKrw,
+        costKrw, evalKrw, pnlKrw, pnlPct,
+      });
+      // 원가·평가 모두 알 때만 합산 (한쪽만 알면 수익률이 왜곡되므로 제외)
+      if (evalKrw != null && costKrw != null) { secEvalKrw += evalKrw; secCostKrw += costKrw; }
+    }
+
+    // 평가액(없으면 매수원가) 큰 순으로 정렬
+    heldList.sort((a, b) =>
+      (b.evalKrw ?? b.costKrw ?? -Infinity) - (a.evalKrw ?? a.costKrw ?? -Infinity));
+
+    const netCashIn = cashIn - cashOut;
+    const unrealizedKrw = secEvalKrw - secCostKrw;
+    const gain = realized + dividends + unrealizedKrw;
+    const gainPct = netCashIn > 0 ? (gain / netCashIn) * 100 : null;
+
+    sections.push({
+      key: acc.key, label: acc.label,
+      netCashIn, cashIn, cashOut, dividends, realized,
+      unrealizedKrw, totalCostKrw: secCostKrw, totalEvalKrw: secEvalKrw,
+      totalGain: gain, totalGainPct: gainPct,
+      heldList,
     });
-    if (evalKrw != null) { totalEvalKrw += evalKrw; totalCostKrw += p.totalCostKrw; }
+
+    total.cashIn += cashIn;
+    total.cashOut += cashOut;
+    total.dividends += dividends;
+    total.realized += realized;
+    total.totalCostKrw += secCostKrw;
+    total.totalEvalKrw += secEvalKrw;
   }
 
-  // 평가액 큰 순으로 정렬
-  heldList.sort((a, b) => (b.evalKrw ?? -Infinity) - (a.evalKrw ?? -Infinity));
-
-  const netCashIn = cashIn - cashOut;
-  const unrealizedKrw = totalEvalKrw - totalCostKrw;
-  const totalGain = realized + dividends + unrealizedKrw;
+  const netCashIn = total.cashIn - total.cashOut;
+  const unrealizedKrw = total.totalEvalKrw - total.totalCostKrw;
+  const totalGain = total.realized + total.dividends + unrealizedKrw;
   const totalGainPct = netCashIn > 0 ? (totalGain / netCashIn) * 100 : null;
 
-  return {
-    netCashIn, cashIn, cashOut, dividends, realized,
-    unrealizedKrw, totalCostKrw, totalEvalKrw, totalGain, totalGainPct,
-    heldList,
+  const overall = {
+    netCashIn, cashIn: total.cashIn, cashOut: total.cashOut,
+    dividends: total.dividends, realized: total.realized,
+    unrealizedKrw, totalCostKrw: total.totalCostKrw, totalEvalKrw: total.totalEvalKrw,
+    totalGain, totalGainPct,
   };
+
+  const needTickers = [...need.values()]
+    .map((e) => ({ name: e.name, qty: e.qty, costKrw: e.costKrw, accounts: [...e.accounts] }))
+    .sort((a, b) => b.costKrw - a.costKrw);
+
+  return { overall, sections, needTickers };
 }
 
 function renderTest() {
@@ -718,6 +844,7 @@ function renderTest() {
   }
 
   const tr = testReport;
+  const ov = tr.overall;
   status.textContent = sheets.updatedAt
     ? `거래내역 기준: ${new Date(sheets.updatedAt).toLocaleString("ko-KR")}  ·  현재가는 data.json 기준`
     : "거래내역 기준: 알 수 없음";
@@ -728,67 +855,113 @@ function renderTest() {
   const sPct = (v) => v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(2) + "%";
   const cls = (v) => v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : "flat";
 
+  // ── 상단: 전체(종합) 요약 ──
   summary.innerHTML = `
     <div class="sum-box">
       <span class="sum-label">순 입금 (실 투자금)</span>
-      <span class="sum-value">${fmt(tr.netCashIn)}</span>
-      <span class="sum-pnl">입금 ${fmt(tr.cashIn)} − 출금 ${fmt(tr.cashOut)}</span>
+      <span class="sum-value">${fmt(ov.netCashIn)}</span>
+      <span class="sum-pnl">입금 ${fmt(ov.cashIn)} − 출금 ${fmt(ov.cashOut)}</span>
     </div>
     <div class="sum-box">
       <span class="sum-label">현재 평가액</span>
-      <span class="sum-value">${fmt(tr.totalEvalKrw)}</span>
-      <span class="sum-pnl">매수원가 ${fmt(tr.totalCostKrw)}</span>
+      <span class="sum-value">${fmt(ov.totalEvalKrw)}</span>
+      <span class="sum-pnl">매수원가 ${fmt(ov.totalCostKrw)}</span>
     </div>
     <div class="sum-box sum-gain">
-      <span class="sum-label">종합 수익</span>
-      <span class="sum-value ${cls(tr.totalGain)}">${sign(tr.totalGain)} <small>${sPct(tr.totalGainPct)}</small></span>
-      <span class="sum-pnl">평가 ${sign(tr.unrealizedKrw)} · 실현 ${sign(tr.realized)} · 분배금 ${fmt(tr.dividends)}</span>
+      <span class="sum-label">전체 수익 (3개 계좌 합산)</span>
+      <span class="sum-value ${cls(ov.totalGain)}">${sign(ov.totalGain)} <small>${sPct(ov.totalGainPct)}</small></span>
+      <span class="sum-pnl">평가 ${sign(ov.unrealizedKrw)} · 실현 ${sign(ov.realized)} · 분배금 ${fmt(ov.dividends)}</span>
     </div>`;
 
-  if (!tr.heldList.length) {
-    grid.innerHTML = noticeMsg("보유 중인 종목이 없습니다", "거래내역상 모든 종목이 매도됐거나 잔량 0");
-    return;
+  // 한 계좌 섹션의 보유 종목 표
+  const renderHoldings = (heldList) => {
+    if (!heldList.length) {
+      return `<p class="sec-empty">보유 중인 종목이 없습니다</p>`;
+    }
+    const tbody = heldList.map((h) => {
+      const k = cls(h.pnlKrw);
+      const tickerCell = h.ticker
+        ? `<span class="ticker">${esc(h.ticker)}</span>`
+        : `<span class="ticker tk-none">필요 티커 — 미등록</span>`;
+      return `
+        <tr>
+          <td>
+            <div class="th-name">${esc(h.name)}</div>
+            <div class="th-meta">${tickerCell}</div>
+          </td>
+          <td class="num">${h.qty.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</td>
+          <td class="num">${fmt(h.avgCostKrw)}</td>
+          <td class="num">${fmt(h.priceKrw)}</td>
+          <td class="num">${fmt(h.costKrw)}</td>
+          <td class="num">${fmt(h.evalKrw)}</td>
+          <td class="num pnl ${k}">
+            ${sign(h.pnlKrw)}<br><small>${sPct(h.pnlPct)}</small>
+          </td>
+        </tr>`;
+    }).join("");
+    return `
+      <div class="sheet-wrap">
+        <table class="sheet-table holdings-table">
+          <thead>
+            <tr>
+              <th>종목</th>
+              <th class="num">수량</th>
+              <th class="num">평단(원)</th>
+              <th class="num">현재가(원)</th>
+              <th class="num">매수원가</th>
+              <th class="num">평가액</th>
+              <th class="num">평가손익</th>
+            </tr>
+          </thead>
+          <tbody>${tbody}</tbody>
+        </table>
+      </div>`;
+  };
+
+  // ── 계좌별 섹션 ──
+  const sectionsHtml = tr.sections.map((s) => `
+    <section class="acct-section">
+      <header class="acct-head">
+        <h3 class="acct-title">${esc(s.label)}</h3>
+        <span class="acct-gain ${cls(s.totalGain)}">${sign(s.totalGain)} <small>${sPct(s.totalGainPct)}</small></span>
+      </header>
+      <p class="acct-meta">
+        순입금 ${fmt(s.netCashIn)} · 평가액 ${fmt(s.totalEvalKrw)} ·
+        평가 ${sign(s.unrealizedKrw)} · 실현 ${sign(s.realized)} · 분배금 ${fmt(s.dividends)}
+      </p>
+      ${renderHoldings(s.heldList)}
+    </section>`).join("");
+
+  // ── '필요 티커' — 매핑 없어 시세 조회 안 되는 보유 종목 ──
+  let needHtml = "";
+  if (tr.needTickers.length) {
+    const rows = [...tr.needTickers]
+      .sort((a, b) => a.accounts[0] === b.accounts[0]
+        ? a.name.localeCompare(b.name, "ko") : a.accounts[0].localeCompare(b.accounts[0], "ko"))
+      .map((n) => `
+      <tr>
+        <td class="th-name">${esc(n.name)}</td>
+        <td>${n.accounts.map(esc).join(", ")}</td>
+        <td class="num">${n.qty.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</td>
+      </tr>`).join("");
+    needHtml = `
+      <section class="acct-section need-section">
+        <header class="acct-head">
+          <h3 class="acct-title">⚠️ 필요 티커 (${tr.needTickers.length}종목)</h3>
+        </header>
+        <p class="acct-meta">아래는 보유 중이지만 시세 매칭이 안 되는 종목입니다. 시트의 <b>'필요 티커'</b> 탭에 <b>종목명 · 티커 · 국가(USD/JPY)</b> 를 채우면 시세·평가·수익률에 반영됩니다. (해외주는 국가가 있어야 평단 환율이 정확)</p>
+        <div class="sheet-wrap">
+          <table class="sheet-table">
+            <thead>
+              <tr><th>종목명</th><th>계좌</th><th class="num">보유수량</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </section>`;
   }
 
-  const tbody = tr.heldList.map((h) => {
-    const k = cls(h.pnlKrw);
-    const tickerCell = h.ticker
-      ? `<span class="ticker">${esc(h.ticker)}</span>`
-      : `<span class="ticker tk-none">시세 매칭 안 됨</span>`;
-    return `
-      <tr>
-        <td>
-          <div class="th-name">${esc(h.name)}</div>
-          <div class="th-meta">${tickerCell}</div>
-        </td>
-        <td class="num">${h.qty.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</td>
-        <td class="num">${fmt(h.avgCostKrw)}</td>
-        <td class="num">${fmt(h.priceKrw)}</td>
-        <td class="num">${fmt(h.costKrw)}</td>
-        <td class="num">${fmt(h.evalKrw)}</td>
-        <td class="num pnl ${k}">
-          ${sign(h.pnlKrw)}<br><small>${sPct(h.pnlPct)}</small>
-        </td>
-      </tr>`;
-  }).join("");
-
-  grid.innerHTML = `
-    <div class="sheet-wrap">
-      <table class="sheet-table holdings-table">
-        <thead>
-          <tr>
-            <th>종목</th>
-            <th class="num">수량</th>
-            <th class="num">평단(원)</th>
-            <th class="num">현재가(원)</th>
-            <th class="num">매수원가</th>
-            <th class="num">평가액</th>
-            <th class="num">평가손익</th>
-          </tr>
-        </thead>
-        <tbody>${tbody}</tbody>
-      </table>
-    </div>`;
+  grid.innerHTML = sectionsHtml + needHtml;
 }
 
 /* ---------- 메인 ---------- */

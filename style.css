@@ -318,6 +318,27 @@ body {
 .holdings-table td.pnl.up { color: var(--up); }
 .holdings-table td.pnl.down { color: var(--down); }
 
+/* 계좌별 섹션 (종합 · ISA · 연금저축) */
+.acct-section { grid-column: 1 / -1; margin-top: 18px; }
+.acct-section:first-child { margin-top: 4px; }
+.acct-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; margin-bottom: 6px;
+}
+.acct-title { font-size: 1.05rem; font-weight: 700; margin: 0; }
+.acct-gain { font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.acct-gain small { font-size: .78rem; font-weight: 600; margin-left: 3px; opacity: .85; }
+.acct-gain.up { color: var(--up); }
+.acct-gain.down { color: var(--down); }
+.acct-meta { font-size: .82rem; color: var(--muted); margin: 0 0 8px; line-height: 1.5; }
+.sec-empty {
+  grid-column: 1 / -1; color: var(--muted); font-size: .85rem;
+  padding: 12px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.need-section .acct-title { color: #f59e0b; }
+.need-section .acct-meta b { color: var(--text); }
+
 /* 종합 수익 박스 강조 */
 .sum-gain { border-color: var(--accent); }
 .sum-gain .sum-value.up { color: var(--up); }
