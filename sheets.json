@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-31T12:19:46.462Z",
+  "updatedAt": "2026-05-31T12:23:18.653Z",
   "source": {
     "sheetId": "1JXCFGpgqZX0cwCvMrA9jaO1dWqNaiQNjtLVOfCKxNpA",
     "accounts": [
@@ -12472,7 +12472,7 @@
       "currency": "KRW"
     },
     {
-      "name": "커버 (일본주)",
+      "name": "커버",
       "ticker": "TYO",
       "currency": "JPY"
     },

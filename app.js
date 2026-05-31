@@ -715,10 +715,13 @@ function buildTestReport(sheetsData, portfolio, data) {
   };
 
   // 외화 → 원화 환산 (watchlist 의 환율 종목에서 자동 조회)
+  // 환율 종목(kind:통화)은 주봉으로 수집돼 weekly 에 들어가므로 quotes·weekly 양쪽을 확인.
+  const fxQuote = (sym) =>
+    data?.quotes?.[sym]?.price || data?.weekly?.[sym]?.price || null;
   const fxRates = {
-    USD: data?.quotes?.["KRW=X"]?.price || null,    // USD/KRW
-    JPY: data?.quotes?.["JPYKRW=X"]?.price || null, // JPY/KRW
-    EUR: data?.quotes?.["EURKRW=X"]?.price || null, // EUR/KRW
+    USD: fxQuote("KRW=X"),    // USD/KRW
+    JPY: fxQuote("JPYKRW=X"), // JPY/KRW
+    EUR: fxQuote("EURKRW=X"), // EUR/KRW
   };
   const toKrw = (price, currency) => {
     if (price == null) return null;
