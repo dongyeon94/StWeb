@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-31T12:23:18.653Z",
+  "updatedAt": "2026-05-31T12:53:53.852Z",
   "source": {
     "sheetId": "1JXCFGpgqZX0cwCvMrA9jaO1dWqNaiQNjtLVOfCKxNpA",
     "accounts": [
@@ -12468,12 +12468,12 @@
     },
     {
       "name": "ACE 미국500데일리타겟커버드콜(합성)",
-      "ticker": "483290.KS",
+      "ticker": "480030.KS",
       "currency": "KRW"
     },
     {
       "name": "커버",
-      "ticker": "TYO",
+      "ticker": "5253.T",
       "currency": "JPY"
     },
     {
