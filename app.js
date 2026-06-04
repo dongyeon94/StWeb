@@ -388,16 +388,20 @@ function noticeUrl(n) {
     safeUrl(n.url) ||
     (n.source === "LH"
       ? "https://apply.lh.or.kr"
+      : n.source === "SH"
+      ? "https://housing.seoul.go.kr/site/main/sh/publicSale/01/list"
       : "https://www.applyhome.co.kr")
   );
 }
+
+const SH_SALE_URL = "https://housing.seoul.go.kr/site/main/sh/publicSale/01/list";
 
 const ymd = (s) => (s ? esc(s).slice(2).replace(/-/g, ".") : "—"); // 2026-05-20 → 26.05.20
 const md  = (s) => (s ? esc(s).slice(5).replace(/-/g, ".") : "");   // 2026-05-20 → 05.20
 
 const STATUS_KEY = { 접수중: "open", 예정: "soon", 공고중: "posted", 마감: "closed" };
 const KIND_KEY   = { 분양: "sale", 임대: "rent", 무순위: "extra" };
-const SRC_KEY    = { LH: "lh", 청약홈: "home" };
+const SRC_KEY    = { LH: "lh", 청약홈: "home", SH: "sh" };
 
 function cheongyakStatus(n) {
   const today = new Date().toISOString().slice(0, 10);
@@ -495,9 +499,18 @@ function renderCheongyak() {
     ? `청약 일정 기준: ${new Date(c.updatedAt).toLocaleString("ko-KR")}`
     : "청약 일정 — 아직 수집되지 않음";
 
+  // SH(서울주택도시공사) 분양 — 불러오기 실패 시 최상단에 안내 배너만 표시
+  const shSrc = c.sources && c.sources.SH;
+  const shBanner =
+    shSrc && !shSrc.ok && !/인증키/.test(shSrc.error || "")
+      ? `<p class="sh-banner">⚠️ SH(서울주택도시공사) 분양 정보를 불러오지 못했습니다
+          — <a href="${SH_SALE_URL}" target="_blank" rel="noopener noreferrer">서울주거포털에서 직접 확인 →</a></p>`
+      : "";
+
   if (!notices.length) {
     summary.innerHTML = "";
-    grid.innerHTML = !c.updatedAt
+    grid.innerHTML = shBanner + (
+      !c.updatedAt
       ? noticeMsg(
           "청약 일정이 아직 수집되지 않았습니다",
           "GitHub Actions의 '청약 일정 받기' 단계가 실행되면 표시됩니다."
@@ -507,7 +520,7 @@ function renderCheongyak() {
           "청약 API 인증키가 설정되지 않았습니다",
           "data.go.kr 인증키를 저장소 Secret(DATA_GO_KR_KEY)에 등록하세요. README 참고."
         )
-      : noticeMsg("표시할 청약 공고가 없습니다", "");
+      : noticeMsg("표시할 청약 공고가 없습니다", ""));
     return;
   }
 
@@ -547,10 +560,10 @@ function renderCheongyak() {
       <span class="sum-pnl">접수중 ${tally.접수중} · 예정 ${tally.예정} · 공고중 ${tally.공고중}${closedNote}</span>
     </div>${nextBox}`;
 
-  // 일부 출처만 실패한 경우 경고 한 줄
+  // 일부 출처만 실패한 경우 경고 한 줄 (SH 는 위 전용 배너로 따로 안내)
   const failed = c.sources
     ? Object.entries(c.sources).filter(
-        ([, s]) => !s.ok && !/인증키/.test(s.error || "")
+        ([k, s]) => !s.ok && !/인증키/.test(s.error || "") && k !== "SH"
       )
     : [];
   const warn = failed.length
@@ -560,8 +573,8 @@ function renderCheongyak() {
     : "";
 
   grid.innerHTML = activeNotices.length
-    ? warn + activeNotices.map(renderNoticeCard).join("")
-    : warn + noticeMsg("표시할 청약 공고가 없습니다", tally.마감 ? `마감된 공고 ${tally.마감}건만 있어 모두 숨김` : "");
+    ? shBanner + warn + activeNotices.map(renderNoticeCard).join("")
+    : shBanner + warn + noticeMsg("표시할 청약 공고가 없습니다", tally.마감 ? `마감된 공고 ${tally.마감}건만 있어 모두 숨김` : "");
 }
 
 /* ============================================================

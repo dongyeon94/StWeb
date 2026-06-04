@@ -1,14 +1,15 @@
 // ============================================================
 //  청약 일정 수집 스크립트  (GitHub Actions 또는 로컬에서 실행)
 //
-//  공공데이터포털(data.go.kr) 오픈API 두 곳에서 분양·임대 공고를
-//  받아 cheongyak.json 으로 저장합니다.
-//    · 한국부동산원 청약홈 — APT 분양정보 조회 서비스
-//    · 한국토지주택공사(LH) — 분양임대공고문 조회 서비스
+//  여러 출처에서 분양·임대 공고를 받아 cheongyak.json 으로 저장합니다.
+//    · 한국부동산원 청약홈 — APT 분양정보 조회 서비스 (data.go.kr API)
+//    · 청약홈 무순위/잔여세대(줍줍) — 같은 서비스 다른 엔드포인트 (data.go.kr API)
+//    · 한국토지주택공사(LH) — 분양임대공고문 조회 서비스 (data.go.kr API)
+//    · 서울주택도시공사(SH) — 서울주거포털 분양 공고 스크래핑 (인증키 불필요, 분양만)
 //
-//  ▶ 무료 인증키가 필요합니다:
+//  ▶ data.go.kr API 출처는 무료 인증키가 필요합니다 (SH 는 키 없이 동작):
 //    1. data.go.kr 회원가입
-//    2. 위 두 API 를 각각 "활용신청" (보통 즉시 승인)
+//    2. 위 API 들을 각각 "활용신청" (보통 즉시 승인)
 //    3. 발급된 인증키를 환경변수 DATA_GO_KR_KEY 로 전달
 //       GitHub → 저장소 Settings → Secrets and variables → Actions
 //              → New repository secret → 이름 DATA_GO_KR_KEY
@@ -230,6 +231,84 @@ async function fetchLh() {
   return all.filter(isLhResidentialSale).map(mapLh);
 }
 
+/* ============================================================
+   4) SH(서울주택도시공사) — 서울주거포털 분양 공고 (스크래핑)
+   data.go.kr 에 SH 실시간 공고 API 가 없어 서울주거포털 목록 HTML 을 파싱.
+   분양만 수집 (임대 제외). 비공식이라 사이트 구조 변경 시 깨질 수 있음 —
+   실패하면 sources.SH.ok=false 로 남겨 화면 상단에 안내 배너를 띄웁니다.
+   ============================================================ */
+const SH_BASE = "https://housing.seoul.go.kr";
+const SH_SALE_LIST = `${SH_BASE}/site/main/sh/publicSale/01/list`;
+
+async function getHtml(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { "User-Agent": "cheongyak-dashboard" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 태그·주석·엔티티 제거 후 공백 정리
+function stripHtml(s) {
+  return String(s)
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#3[49];/g, "'").replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchSh() {
+  const htmlText = await getHtml(SH_SALE_LIST);
+  const tbody = htmlText.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
+  if (!tbody) throw new Error("목록 표 없음 — 사이트 구조 변경 추정");
+  const trs = tbody[1].match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+  const notices = [];
+  for (const tr of trs) {
+    // 컬럼: 번호 | 청약유형 | 공고명 | 공고게시일 | 발표일 | 담당부서 | 링크
+    const tds = [...tr.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => m[1]);
+    if (tds.length < 4) continue;
+    const name = stripHtml(tds[2]);                       // 공고명
+    if (!name) continue;
+    const noticeDate = normDate(stripHtml(tds[3]));       // 공고게시일
+    const winnerDate = tds[4] ? normDate(stripHtml(tds[4])) : ""; // 발표일
+    const seq = (tr.match(/seq=(\d+)/) || [])[1];
+    const url = seq
+      ? `${SH_BASE}/site/main/sh/publicSale/view?seq=${seq}&supplyType=publicSale&splyCd=01`
+      : SH_SALE_LIST;
+    notices.push({
+      source: "SH",
+      kind: "분양",
+      name,
+      region: "서울",
+      address: "",
+      noticeDate,
+      applyStart: "",
+      applyEnd: "",
+      winnerDate,
+      url,
+    });
+  }
+  if (!notices.length) throw new Error("분양 공고 0건 — 사이트 구조 변경 추정");
+
+  // [정정]·[수정] 등 같은 공고의 중복은 공고게시일이 최신인 것만 남김
+  const byKey = new Map();
+  for (const n of notices) {
+    const key = n.name.replace(/^\s*\[[^\]]*\]\s*/, "").trim();
+    const prev = byKey.get(key);
+    if (!prev || (n.noticeDate || "") > (prev.noticeDate || "")) byKey.set(key, n);
+  }
+  return [...byKey.values()];
+}
+
 /* ---------- 상태 판정 / 정렬 ---------- */
 function statusOf(n) {
   if (n.applyStart && todayStr < n.applyStart) return "예정";
@@ -256,13 +335,14 @@ async function main() {
   let notices = [];
 
   const jobs = [
-    ["청약홈", fetchApplyHome],
-    ["줍줍", fetchRemndr],
-    ["LH", fetchLh],
+    { name: "청약홈", fn: fetchApplyHome, needKey: true },
+    { name: "줍줍", fn: fetchRemndr, needKey: true },
+    { name: "LH", fn: fetchLh, needKey: true },
+    { name: "SH", fn: fetchSh, needKey: false },   // 서울주거포털 스크래핑 — 키 불필요
   ];
 
-  for (const [name, fn] of jobs) {
-    if (!KEY) {
+  for (const { name, fn, needKey } of jobs) {
+    if (needKey && !KEY) {
       sources[name] = { ok: false, error: "인증키 미설정" };
       console.log(`SKIP  ${name}  — DATA_GO_KR_KEY 환경변수 없음`);
       continue;
@@ -278,9 +358,14 @@ async function main() {
     }
   }
 
+  // 당첨자 발표일이 이미 지난 공고는 전체에서 제외 (발표일 없는 공고는 그대로 유지)
+  notices = notices.filter((n) => !(n.winnerDate && n.winnerDate < todayStr));
+
   // 최근 모집공고이거나 접수가 아직 끝나지 않은 공고만, 정렬 후 상한 적용
+  // (SH 분양은 건수가 적고 자주 안 올라와 최근성 필터에서 제외 — 있으면 항상 표시)
   notices = notices
     .filter((n) => {
+      if (n.source === "SH") return true;
       const recent = n.noticeDate && n.noticeDate >= sinceStr;
       const open = n.applyEnd && n.applyEnd >= todayStr;
       return recent || open;
