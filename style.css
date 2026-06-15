@@ -354,6 +354,11 @@ body {
 .need-section .acct-title { color: #f59e0b; }
 .need-section .acct-meta b { color: var(--text); }
 
+/* 종목별 합산 섹션 (계좌 무관) */
+.bystock-section { border-top: 1px solid var(--border); padding-top: 14px; }
+.bystock-section .acct-title { color: var(--accent); }
+.holdings-table .th-acct { display: block; margin-top: 1px; opacity: .8; }
+
 /* 종합 수익 박스 강조 */
 .sum-gain { border-color: var(--accent); }
 .sum-gain .sum-value.up { color: var(--up); }
