@@ -39,6 +39,29 @@ body {
 .sum-value { font-size: 1.3rem; font-weight: 700; }
 .sum-pnl   { font-size: .9rem; font-weight: 600; }
 
+/* '전체 수익' 박스 — 시크릿 게이트(겉보기엔 일반 박스, 5초 길게 누르면 열림) */
+.sum-gain { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+
+/* 시크릿 — 전체 수익률 (누적 + 연환산 IRR) */
+.secret-returns {
+  flex-basis: 100%;
+  background: linear-gradient(180deg, rgba(76,141,255,.08), var(--panel));
+  border: 1px solid var(--accent); border-radius: 12px;
+  padding: 14px 18px; display: flex; flex-direction: column; gap: 10px;
+}
+.sr-head { font-size: .82rem; font-weight: 700; color: var(--text); }
+.sr-head small { color: var(--muted); font-weight: 500; }
+.sr-metrics { display: flex; flex-wrap: wrap; gap: 12px 28px; }
+.sr-metric { display: flex; flex-direction: column; gap: 2px; min-width: 200px; }
+.sr-k { font-size: .8rem; color: var(--muted); font-weight: 600; }
+.sr-v { font-size: 1.6rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sr-v.up { color: var(--up); } .sr-v.down { color: var(--down); } .sr-v.flat { color: var(--muted); }
+.sr-sub { font-size: .78rem; color: var(--muted); }
+.sr-foot {
+  font-size: .8rem; color: var(--muted); border-top: 1px solid var(--border);
+  padding-top: 8px; font-variant-numeric: tabular-nums;
+}
+
 .status { color: var(--muted); font-size: .85rem; margin-bottom: 18px; }
 
 /* 그룹 탭 */
@@ -332,6 +355,28 @@ body {
 .holdings-table td.pnl small { display: block; font-weight: 600; opacity: .85; margin-top: 1px; }
 .holdings-table td.pnl.up { color: var(--up); }
 .holdings-table td.pnl.down { color: var(--down); }
+/* 시크릿 — 여기서만 보이는 손익 카드 */
+.secret-card {
+  display: inline-flex; flex-direction: column; gap: 3px;
+  align-self: flex-start; max-width: 280px;
+  margin: 0 0 12px; padding: 11px 15px;
+  background: linear-gradient(180deg, rgba(76,141,255,.10), var(--panel-2));
+  border: 1px solid var(--accent); border-radius: 12px;
+}
+.secret-card .sc-label { font-size: .76rem; color: var(--muted); font-weight: 600; line-height: 1.35; }
+.secret-card .sc-label small { opacity: .8; }
+.secret-card .sc-total { font-size: 1.5rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.secret-card .sc-total.up { color: var(--up); }
+.secret-card .sc-total.down { color: var(--down); }
+.secret-card .sc-total.flat { color: var(--muted); }
+.secret-card .sc-break { font-size: .76rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.holdings-table .th-acct { font-size: .7rem; color: var(--muted); }
+.holdings-table .th-tag {
+  font-size: .64rem; font-weight: 700; vertical-align: middle;
+  padding: 1px 6px; border-radius: 5px;
+  background: var(--panel-2); color: var(--muted);
+}
 
 /* 계좌별 섹션 (종합 · ISA · 연금저축) */
 .acct-section { grid-column: 1 / -1; margin-top: 18px; }

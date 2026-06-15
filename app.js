@@ -31,6 +31,7 @@ let sheets = null;          // sheets.json 내용 (또는 { __error })
 let testReport = null;      // 거래내역으로 계산한 현재 보유·손익 리포트 (load 시 계산)
 let stockStatusText = "";   // 주식 탭에서 보여줄 상태줄 텍스트
 let groupNotes = {};        // { 그룹명: "탭 상단에 띄울 메모 (인라인 **bold** 지원)" }
+let secretUnlocked = false; // 히든 — '전체 수익' 박스 길게 누르면 수익률 시크릿 토글
 
 /* ---------- 숫자 포맷 ---------- */
 function fmtCurrency(value, currency) {
@@ -610,12 +611,24 @@ function accumulateAccount(txs, currencyOf) {
     bal: headers.indexOf("잔고"),  // 종목별 브로커 보유 잔고 (현재 수량의 권위)
     usd: headers.indexOf("USD"),   // 행별 USD/KRW 환율 (없으면 -1)
     jpy: headers.indexOf("JPY"),   // 행별 JPY/KRW 환율 (없으면 -1)
+    date: headers.indexOf("실거래일자"),   // 현금흐름 날짜 (IRR용)
+    cash: headers.indexOf("예수금잔액"),   // 계좌 예수금 잔고 (현재가치 = 평가액 + 예수금)
   };
 
   const replay = new Map();      // 종목명 → { qty, totalCostKrw } (평단 산출용)
   const latestBal = new Map();   // 종목명 → 최신 잔고 (수량 있는 행 기준)
+  const flows = [];              // IRR용 외부 현금흐름 [{ date:'2021.02.16', krw }] 입금 −, 출금 +
+  let cashBalance = null;        // 최신 예수금잔액 (시트 최상단=가장 최근 행)
   let cashIn = 0, cashOut = 0, dividends = 0, realized = 0;
-  if (!headers.length) return { positions: new Map(), cashIn, cashOut, dividends, realized };
+  if (!headers.length)
+    return { positions: new Map(), flows, cashBalance, cashIn, cashOut, dividends, realized };
+  // 시트 최상단(가장 최근)부터 첫 유효 예수금잔액을 현재 예수금으로 사용
+  if (idx.cash >= 0) {
+    for (const r of rows) {
+      const v = txNum(r[idx.cash]);
+      if (r[idx.cash] != null && String(r[idx.cash]).trim() !== "") { cashBalance = v; break; }
+    }
+  }
 
   // 시트는 최신순. 시간순 누적을 위해 뒤집어서 순회 → 마지막에 쓴 잔고가 최신.
   for (const r of [...rows].reverse()) {
@@ -646,12 +659,19 @@ function accumulateAccount(txs, currencyOf) {
       return { avg, sq };
     };
 
+    const date = idx.date >= 0 ? (r[idx.date] || "").trim() : "";
     if (type === "입금") {
       if (/분배금/.test(detail)) dividends += amtKrw;
-      else if (/이체/.test(detail)) cashIn += amtKrw;
+      else if (/이체/.test(detail)) {
+        cashIn += amtKrw;
+        if (date) flows.push({ date, krw: -amtKrw });   // 투자금 유입 = 음수
+      }
       // 대체입금·공모주환불금·예탁금이용료·외화단수주매각대금 등은 순 투자금 집계에서 제외
     } else if (type === "출금") {
-      if (/이체/.test(detail)) cashOut += amtKrw;
+      if (/이체/.test(detail)) {
+        cashOut += amtKrw;
+        if (date) flows.push({ date, krw: amtKrw });     // 회수 = 양수
+      }
       // 공모주청약수수료 등 그 외 출금은 제외
     } else if (type === "매수" && name && qty > 0) {
       const p = replay.get(name) || { qty: 0, totalCostKrw: 0 };
@@ -693,7 +713,106 @@ function accumulateAccount(txs, currencyOf) {
       });
     }
   }
-  return { positions, cashIn, cashOut, dividends, realized };
+  return { positions, flows, cashBalance, cashIn, cashOut, dividends, realized };
+}
+
+// ── IRR (연환산 내부수익률) — 이분법 ──
+// flows: [{ t: Date, krw }] 투자금 −, 회수/현재가치 +. 부호 바뀌는 흐름이 있어야 해(I/O 둘 다).
+function computeIRR(flows) {
+  const valid = flows.filter((f) => f.t instanceof Date && !isNaN(f.t) && f.krw);
+  if (valid.length < 2) return null;
+  const hasNeg = valid.some((f) => f.krw < 0), hasPos = valid.some((f) => f.krw > 0);
+  if (!hasNeg || !hasPos) return null;
+  const t0 = Math.min(...valid.map((f) => f.t.getTime()));
+  const yr = (f) => (f.t.getTime() - t0) / (365.25 * 24 * 3600 * 1000);
+  const npv = (r) => valid.reduce((s, f) => s + f.krw / Math.pow(1 + r, yr(f)), 0);
+  let lo = -0.9999, hi = 10, flo = npv(lo), fhi = npv(hi);
+  if (flo * fhi > 0) return null;                 // 구간 내 부호 변화 없음 → 해 없음
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2, fm = npv(mid);
+    if (Math.abs(fm) < 1 || hi - lo < 1e-7) return mid;
+    if (flo * fm < 0) { hi = mid; fhi = fm; } else { lo = mid; flo = fm; }
+  }
+  return (lo + hi) / 2;
+}
+
+// '2021.02.16' → Date (로컬). 형식 어긋나면 null.
+function parseSheetDate(s) {
+  const m = /^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})/.exec((s || "").trim());
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return isNaN(d) ? null : d;
+}
+
+// 종목별 실현손익·배당 (시크릿 '종목당 수익' 표 전용).
+// ★ 계좌 손익(accumulateAccount.realized/overall)에는 영향을 주지 않는 독립 계산.
+// - 매도는 deferred: 재고 없으면 보류했다가 매수 다 쌓인 뒤 재처리 → 병합(행 순서 꼬임) 교정.
+// - 공모주처럼 매수원가 자체가 없는 매도는 끝까지 재고가 없어 자동 제외(패스)되고 orphan 으로 표시.
+function perStockReport(txs, currencyOf) {
+  const headers = Array.isArray(txs?.headers) ? txs.headers : [];
+  const rows = Array.isArray(txs?.rows) ? txs.rows : [];
+  const out = new Map();   // 종목명 → { realizedKrw, dividendsKrw, hadSell, orphan }
+  if (!headers.length) return out;
+  const idx = {
+    type: headers.indexOf("거래유형"), detail: headers.indexOf("상세내용"),
+    name: headers.indexOf("종목명"), qty: headers.indexOf("수량"),
+    price: headers.indexOf("단가"), amount: headers.lastIndexOf("정산금액"),
+    usd: headers.indexOf("USD"), jpy: headers.indexOf("JPY"),
+  };
+  const replay = new Map();
+  const get = (n) => {
+    let e = out.get(n);
+    if (!e) { e = { realizedKrw: 0, dividendsKrw: 0, hadSell: false, orphan: false }; out.set(n, e); }
+    return e;
+  };
+  const doSell = (nm, q, amtKrw) => {
+    const p = replay.get(nm);
+    if (!p || p.qty < 1e-6) return false;
+    const avg = p.totalCostKrw / p.qty;
+    const sq = Math.min(q, p.qty);
+    p.qty -= sq; p.totalCostKrw -= avg * sq;
+    if (p.qty < 1e-6) replay.delete(nm);
+    const e = get(nm); e.realizedKrw += amtKrw - avg * sq; e.hadSell = true;
+    return true;
+  };
+  const pending = [];
+  for (const r of [...rows].reverse()) {
+    const type = (r[idx.type] || "").trim();
+    const detail = (r[idx.detail] || "").trim();
+    const name = (r[idx.name] || "").trim();
+    const qty = txNum(r[idx.qty]);
+    const isForeign = /외화|해외/.test(detail);
+    let fx = 1;
+    if (isForeign) {
+      const cur = (currencyOf && currencyOf(name)) || "USD";
+      const col = cur === "JPY" ? idx.jpy : idx.usd;
+      const rate = col >= 0 ? txNum(r[col]) : 0;
+      if (rate > 0) fx = rate;
+    }
+    const amtKrw = txNum(r[idx.amount]) * fx;
+    const unitKrw = txNum(r[idx.price]) * fx;
+    if (type === "입금") {
+      if (/분배금/.test(detail) && name) get(name).dividendsKrw += amtKrw;
+    } else if (type === "매수" && name && qty > 0) {
+      const p = replay.get(name) || { qty: 0, totalCostKrw: 0 };
+      p.qty += qty; p.totalCostKrw += amtKrw; replay.set(name, p);
+    } else if (type === "매도" && name && qty > 0) {
+      if (!doSell(name, qty, amtKrw)) pending.push({ name, qty, amtKrw });
+    } else if (type === "입고" && isForeign && name && qty > 0) {
+      const p = replay.get(name) || { qty: 0, totalCostKrw: 0 };
+      p.qty += qty; p.totalCostKrw += unitKrw * qty; replay.set(name, p);
+    } else if (type === "출고" && isForeign && name && qty > 0) {
+      const p = replay.get(name);
+      if (p && p.qty >= 1e-6) {
+        const avg = p.totalCostKrw / p.qty, sq = Math.min(qty, p.qty);
+        p.qty -= sq; p.totalCostKrw -= avg * sq;
+        if (p.qty < 1e-6) replay.delete(name);
+      }
+    }
+  }
+  // 보류된 매도 재처리 (병합 등). 끝까지 재고 없으면 공모주 등 → orphan 표시 후 패스.
+  for (const ps of pending) if (!doSell(ps.name, ps.qty, ps.amtKrw)) get(ps.name).orphan = true;
+  return out;
 }
 
 // 시트의 계좌별 거래내역을 누적해서 섹션별 + 종합 손익 리포트를 만듭니다.
@@ -749,12 +868,27 @@ function buildTestReport(sheetsData, portfolio, data) {
   // 종합(전체) 집계 누적
   const total = {
     cashIn: 0, cashOut: 0, dividends: 0, realized: 0,
-    totalCostKrw: 0, totalEvalKrw: 0,
+    totalCostKrw: 0, totalEvalKrw: 0, cashBalance: 0,
   };
+  const allFlows = [];   // 모든 계좌의 외부 현금흐름 (IRR용)
+  const realizedByName = new Map();  // 시크릿 표 전용: 종목 → { realizedKrw, dividendsKrw, hadSell, orphan, accounts:Set }
 
   for (const acc of accounts) {
-    const { positions, cashIn, cashOut, dividends, realized } =
+    const { positions, flows, cashBalance, cashIn, cashOut, dividends, realized } =
       accumulateAccount(acc.transactions, currencyOf);
+    if (Array.isArray(flows)) allFlows.push(...flows);
+    if (cashBalance != null) total.cashBalance += cashBalance;
+
+    // 종목별 실현·배당 (독립 계산 — 계좌 손익엔 영향 없음)
+    for (const [name, ps] of perStockReport(acc.transactions, currencyOf)) {
+      let e = realizedByName.get(name);
+      if (!e) { e = { realizedKrw: 0, dividendsKrw: 0, hadSell: false, orphan: false, accounts: new Set() }; realizedByName.set(name, e); }
+      e.realizedKrw += ps.realizedKrw;
+      e.dividendsKrw += ps.dividendsKrw;
+      e.hadSell = e.hadSell || ps.hadSell;
+      e.orphan = e.orphan || ps.orphan;
+      if (ps.hadSell || ps.dividendsKrw > 0) e.accounts.add(acc.label);
+    }
 
     const heldList = [];
     let secCostKrw = 0, secEvalKrw = 0;
@@ -823,18 +957,124 @@ function buildTestReport(sheetsData, portfolio, data) {
   const totalGain = total.realized + total.dividends + unrealizedKrw;
   const totalGainPct = netCashIn > 0 ? (totalGain / netCashIn) * 100 : null;
 
+  // ── 연환산 IRR (시크릿) ──
+  // 외부 현금흐름(이체 입·출금) + 현재가치(보유 평가액 + 예수금)로 내부수익률.
+  const currentValue = total.totalEvalKrw + total.cashBalance;   // 지금 전부 빼면 받을 돈
+  const irrFlows = allFlows
+    .map((f) => ({ t: parseSheetDate(f.date), krw: f.krw }))
+    .filter((f) => f.t);
+  irrFlows.push({ t: new Date(), krw: currentValue });          // 종료 시점 현재가치 (+)
+  const irr = computeIRR(irrFlows);                              // 연이율 (예: 0.123 = 12.3%)
+  const firstFlow = irrFlows.reduce((m, f) => (f.t < m ? f.t : m), new Date());
+  const investYears = (Date.now() - firstFlow.getTime()) / (365.25 * 24 * 3600 * 1000);
+
   const overall = {
     netCashIn, cashIn: total.cashIn, cashOut: total.cashOut,
     dividends: total.dividends, realized: total.realized,
     unrealizedKrw, totalCostKrw: total.totalCostKrw, totalEvalKrw: total.totalEvalKrw,
     totalGain, totalGainPct,
+    cashBalance: total.cashBalance, currentValue,
+    irrPct: irr != null ? irr * 100 : null, investYears,
   };
 
   const needTickers = [...need.values()]
     .map((e) => ({ name: e.name, qty: e.qty, costKrw: e.costKrw, accounts: [...e.accounts] }))
     .sort((a, b) => b.costKrw - a.costKrw);
 
-  return { overall, sections, needTickers };
+  // ── 시크릿 — 종목당 수익 (계좌 합산) ──
+  // 수익금 = 평가손익(현재 보유) + 실현손익 + 배당금. 판/티커 없는 종목도 실현·배당으로 합류.
+  // 공모주(원가 없는 매도 only)는 제외(패스).
+  const byNameMap = new Map();
+  const getStock = (name, ticker) => {
+    let e = byNameMap.get(name);
+    if (!e) {
+      e = { name, ticker: ticker || nameToTicker.get(name) || null, priceKrw: null,
+        qty: 0, costKrw: 0, evalKrw: 0,
+        realizedKrw: 0, dividendsKrw: 0, hadSell: false, orphan: false, accounts: new Set() };
+      byNameMap.set(name, e);
+    }
+    return e;
+  };
+  // 1) 현재 보유분 (평가손익)
+  for (const s of sections) {
+    for (const h of s.heldList) {
+      const e = getStock(h.name, h.ticker);
+      if (!e.ticker && h.ticker) e.ticker = h.ticker;
+      if (e.priceKrw == null && h.priceKrw != null) e.priceKrw = h.priceKrw;
+      e.qty += h.qty;
+      if (h.costKrw != null) e.costKrw += h.costKrw;
+      if (h.evalKrw != null) e.evalKrw += h.evalKrw;
+      e.accounts.add(s.label);
+    }
+  }
+  // 2) 실현손익·배당 (판 종목·티커 없는 종목도 여기서 합류)
+  for (const [name, ps] of realizedByName) {
+    const e = getStock(name);
+    e.realizedKrw += ps.realizedKrw;
+    e.dividendsKrw += ps.dividendsKrw;
+    e.hadSell = e.hadSell || ps.hadSell;
+    e.orphan = e.orphan || ps.orphan;
+    for (const a of ps.accounts) e.accounts.add(a);
+  }
+  const byStock = [...byNameMap.values()].map((e) => {
+    const avgCostKrw = e.costKrw > 0 && e.qty > 0 ? e.costKrw / e.qty : null;
+    const unrealKrw = e.evalKrw > 0 && e.costKrw > 0 ? e.evalKrw - e.costKrw : null;
+    const realizedKrw = e.hadSell ? e.realizedKrw : null;
+    const dividendsKrw = e.dividendsKrw > 0 ? e.dividendsKrw : null;
+    const has = unrealKrw != null || realizedKrw != null || dividendsKrw != null;
+    const profitKrw = has ? (unrealKrw ?? 0) + (realizedKrw ?? 0) + (dividendsKrw ?? 0) : null;
+    return {
+      name: e.name, ticker: e.ticker, qty: e.qty, avgCostKrw, priceKrw: e.priceKrw,
+      costKrw: e.costKrw || null, evalKrw: e.evalKrw || null,
+      unrealKrw, realizedKrw, dividendsKrw, profitKrw,
+      held: e.qty > 1e-6, sold: e.qty < 1e-6 && e.hadSell,
+      accounts: [...e.accounts],
+    };
+  })
+    // 보유도 아니고 실현·배당도 없는(=공모주 orphan only) 종목은 제외
+    .filter((h) => h.held || h.realizedKrw != null || h.dividendsKrw != null)
+    .sort((a, b) => (b.profitKrw ?? -Infinity) - (a.profitKrw ?? -Infinity));
+
+  return { overall, sections, needTickers, byStock };
+}
+
+// 요소를 ms(기본 5초) 이상 길게 누르면 cb 실행 (탭/클릭 실수로는 안 열림)
+function attachLongPress(el, cb, ms = 5000) {
+  if (!el) return;
+  let timer = null;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  el.addEventListener("pointerdown", () => {
+    cancel();
+    timer = setTimeout(() => { timer = null; cb(); }, ms);
+  });
+  el.addEventListener("pointerup", cancel);
+  el.addEventListener("pointerleave", cancel);
+  el.addEventListener("pointercancel", cancel);
+  el.addEventListener("contextmenu", (e) => e.preventDefault());  // 길게 눌러도 메뉴 차단
+}
+
+// 시크릿 — 전체 수익률 박스 (누적 + 연환산 IRR)
+function renderSecretReturns(ov, h) {
+  const { fmt, sign, sPct, cls } = h;
+  const irrTxt = ov.irrPct == null ? "—" : `연 ${sPct(ov.irrPct)}`;
+  const yrs = ov.investYears != null ? ov.investYears.toFixed(1) : "—";
+  return `
+    <div class="secret-returns">
+      <div class="sr-head">🔒 수익률 시크릿 <small>· 박스를 다시 길게 누르면 닫힘</small></div>
+      <div class="sr-metrics">
+        <div class="sr-metric">
+          <span class="sr-k">누적 수익률</span>
+          <span class="sr-v ${cls(ov.totalGainPct)}">${sPct(ov.totalGainPct)}</span>
+          <span class="sr-sub">총수익 ${sign(ov.totalGain)} ÷ 순입금 ${fmt(ov.netCashIn)}</span>
+        </div>
+        <div class="sr-metric">
+          <span class="sr-k">연환산 (IRR)</span>
+          <span class="sr-v ${cls(ov.irrPct)}">${irrTxt}</span>
+          <span class="sr-sub">투자기간 약 ${yrs}년 · 입·출금 타이밍 반영</span>
+        </div>
+      </div>
+      <div class="sr-foot">현재가치 ${fmt(ov.currentValue)} = 평가액 ${fmt(ov.totalEvalKrw)} + 예수금 ${fmt(ov.cashBalance)}</div>
+    </div>`;
 }
 
 function renderTest() {
@@ -883,11 +1123,15 @@ function renderTest() {
       <span class="sum-value">${fmt(ov.totalEvalKrw)}</span>
       <span class="sum-pnl">매수원가 ${fmt(ov.totalCostKrw)}</span>
     </div>
-    <div class="sum-box sum-gain">
+    <div class="sum-box sum-gain" id="sum-gain">
       <span class="sum-label">전체 수익 (3개 계좌 합산)</span>
       <span class="sum-value ${cls(ov.totalGain)}">${sign(ov.totalGain)} <small>${sPct(ov.totalGainPct)}</small></span>
       <span class="sum-pnl">평가 ${sign(ov.unrealizedKrw)} · 실현 ${sign(ov.realized)} · 분배금 ${fmt(ov.dividends)}</span>
-    </div>`;
+    </div>
+    ${secretUnlocked ? renderSecretReturns(ov, { fmt, sign, sPct, cls }) : ""}`;
+
+  // '전체 수익' 박스 5초 길게 누르면 시크릿 토글
+  attachLongPress($("#sum-gain"), () => { secretUnlocked = !secretUnlocked; renderTest(); });
 
   // 한 계좌 섹션의 보유 종목 표
   const renderHoldings = (heldList) => {
@@ -977,7 +1221,64 @@ function renderTest() {
       </section>`;
   }
 
-  grid.innerHTML = sectionsHtml + needHtml;
+  // ── 시크릿 — 종목당 수익 (평가+실현+배당, 계좌 합산), 5초 길게 눌러 열렸을 때만 ──
+  let byStockHtml = "";
+  if (secretUnlocked && tr.byStock && tr.byStock.length) {
+    const winners = tr.byStock.filter((h) => h.profitKrw != null && h.profitKrw > 0).length;
+    const losers = tr.byStock.filter((h) => h.profitKrw != null && h.profitKrw < 0).length;
+    // 여기서만 보이는 교정 손익 합계 (병합 교정·공모주 제외 기준)
+    const sec = tr.byStock.reduce((a, h) => {
+      a.unreal += h.unrealKrw || 0; a.realized += h.realizedKrw || 0;
+      a.div += h.dividendsKrw || 0; a.total += h.profitKrw || 0;
+      return a;
+    }, { unreal: 0, realized: 0, div: 0, total: 0 });
+    const rows = tr.byStock.map((h) => {
+      const acctTxt = h.accounts.length ? h.accounts.join(", ") : "";
+      const tag = h.sold ? "매도완료" : !h.held ? "" : (h.realizedKrw != null ? "일부매도" : "보유");
+      return `
+        <tr>
+          <td>
+            <div class="th-name">${esc(h.name)}${tag ? ` <span class="th-tag">${tag}</span>` : ""}</div>
+            <div class="th-meta">${h.ticker
+              ? `<span class="ticker">${esc(h.ticker)}</span>` : `<span class="ticker tk-none">티커 없음</span>`}${acctTxt
+              ? ` <span class="th-acct">${esc(acctTxt)}</span>` : ""}</div>
+          </td>
+          <td class="num pnl ${cls(h.unrealKrw)}">${sign(h.unrealKrw)}</td>
+          <td class="num pnl ${cls(h.realizedKrw)}">${sign(h.realizedKrw)}</td>
+          <td class="num">${h.dividendsKrw != null ? `<span class="up">${fmt(h.dividendsKrw)}</span>` : "—"}</td>
+          <td class="num pnl ${cls(h.profitKrw)}"><b>${sign(h.profitKrw)}</b></td>
+        </tr>`;
+    }).join("");
+    byStockHtml = `
+      <section class="acct-section bystock-section">
+        <header class="acct-head">
+          <h3 class="acct-title">🔒 종목당 수익 (${tr.byStock.length}종목)</h3>
+          <span class="acct-gain"><small>📈 ${winners} · 📉 ${losers}</small></span>
+        </header>
+        <p class="acct-meta">계좌(종합·ISA) 합산. <b>수익금 = 평가손익 + 실현손익 + 배당금</b>, 수익금순 정렬. 판 종목·티커 없는 종목도 실현손익으로 포함됩니다. (매수원가 없는 공모주 매도는 제외)</p>
+        <div class="secret-card">
+          <span class="sc-label">🔒 여기서만 보이는 손익<br><small>병합 교정·공모주 제외 기준</small></span>
+          <span class="sc-total ${cls(sec.total)}">${sign(sec.total)}</span>
+          <span class="sc-break">평가 ${sign(sec.unreal)} · 실현 ${sign(sec.realized)} · 배당 ${fmt(sec.div)}</span>
+        </div>
+        <div class="sheet-wrap">
+          <table class="sheet-table holdings-table">
+            <thead>
+              <tr>
+                <th>종목</th>
+                <th class="num">평가손익</th>
+                <th class="num">실현손익</th>
+                <th class="num">배당금</th>
+                <th class="num">수익금</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </section>`;
+  }
+
+  grid.innerHTML = sectionsHtml + needHtml + byStockHtml;
 }
 
 /* ---------- 메인 ---------- */
