@@ -31,7 +31,6 @@ let sheets = null;          // sheets.json 내용 (또는 { __error })
 let testReport = null;      // 거래내역으로 계산한 현재 보유·손익 리포트 (load 시 계산)
 let stockStatusText = "";   // 주식 탭에서 보여줄 상태줄 텍스트
 let groupNotes = {};        // { 그룹명: "탭 상단에 띄울 메모 (인라인 **bold** 지원)" }
-let secretUnlocked = false; // 히든 — 제목 5연속 탭 시 '종목별 성적표' 노출
 
 /* ---------- 숫자 포맷 ---------- */
 function fmtCurrency(value, currency) {
@@ -835,36 +834,7 @@ function buildTestReport(sheetsData, portfolio, data) {
     .map((e) => ({ name: e.name, qty: e.qty, costKrw: e.costKrw, accounts: [...e.accounts] }))
     .sort((a, b) => b.costKrw - a.costKrw);
 
-  // ── 종목별 합산 (계좌 무관) — "이 주식으로 얼마 벌었나/잃었나" ──
-  // 같은 종목이 여러 계좌에 있으면 수량·원가·평가액을 합쳐 한 줄로 보여줍니다.
-  const byNameMap = new Map();  // 종목명 → 합산 누적
-  for (const s of sections) {
-    for (const h of s.heldList) {
-      if (!h.ticker) continue;            // 시세 매칭 안 되는 종목은 수익률 계산 불가 → 제외
-      const e = byNameMap.get(h.name) || {
-        name: h.name, ticker: h.ticker, priceKrw: h.priceKrw,
-        qty: 0, costKrw: 0, evalKrw: 0, accounts: new Set(),
-      };
-      e.qty += h.qty;
-      if (h.costKrw != null) e.costKrw += h.costKrw;
-      if (h.evalKrw != null) e.evalKrw += h.evalKrw;
-      e.accounts.add(s.label);
-      byNameMap.set(h.name, e);
-    }
-  }
-  const byStock = [...byNameMap.values()].map((e) => {
-    const avgCostKrw = e.costKrw > 0 && e.qty > 0 ? e.costKrw / e.qty : null;
-    const pnlKrw = e.evalKrw > 0 && e.costKrw > 0 ? e.evalKrw - e.costKrw : null;
-    const pnlPct = pnlKrw != null && e.costKrw > 0 ? (pnlKrw / e.costKrw) * 100 : null;
-    return {
-      name: e.name, ticker: e.ticker, qty: e.qty,
-      avgCostKrw, priceKrw: e.priceKrw,
-      costKrw: e.costKrw || null, evalKrw: e.evalKrw || null,
-      pnlKrw, pnlPct, accounts: [...e.accounts],
-    };
-  }).sort((a, b) => (b.pnlKrw ?? -Infinity) - (a.pnlKrw ?? -Infinity));
-
-  return { overall, sections, needTickers, byStock };
+  return { overall, sections, needTickers };
 }
 
 function renderTest() {
@@ -1007,58 +977,7 @@ function renderTest() {
       </section>`;
   }
 
-  // ── 히든 — 종목별 합산 성적표 (제목 5연속 탭으로만 열림, 계좌 무관·손익순) ──
-  let byStockHtml = "";
-  if (secretUnlocked && tr.byStock && tr.byStock.length) {
-    const winners = tr.byStock.filter((h) => h.pnlKrw != null && h.pnlKrw > 0).length;
-    const losers = tr.byStock.filter((h) => h.pnlKrw != null && h.pnlKrw < 0).length;
-    const rows = tr.byStock.map((h) => {
-      const k = cls(h.pnlKrw);
-      const acctTxt = h.accounts.length > 1 ? ` · ${h.accounts.join(", ")}` : "";
-      return `
-        <tr>
-          <td>
-            <div class="th-name">${esc(h.name)}</div>
-            <div class="th-meta"><span class="ticker">${esc(h.ticker)}</span>${acctTxt
-              ? `<span class="th-acct">${esc(acctTxt)}</span>` : ""}</div>
-          </td>
-          <td class="num">${h.qty.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}</td>
-          <td class="num">${fmt(h.avgCostKrw)}</td>
-          <td class="num">${fmt(h.priceKrw)}</td>
-          <td class="num">${fmt(h.costKrw)}</td>
-          <td class="num">${fmt(h.evalKrw)}</td>
-          <td class="num pnl ${k}">
-            ${sign(h.pnlKrw)}<br><small>${sPct(h.pnlPct)}</small>
-          </td>
-        </tr>`;
-    }).join("");
-    byStockHtml = `
-      <section class="acct-section bystock-section">
-        <header class="acct-head">
-          <h3 class="acct-title">🗝️ 성적표 (${tr.byStock.length}종목)</h3>
-          <span class="acct-gain"><small>📈 ${winners} · 📉 ${losers}</small></span>
-        </header>
-        <p class="acct-meta">계좌 상관없이 같은 종목을 합쳐 손익순으로 정렬한 나만의 성적표. 제목을 한 번 더 탭하면 닫힙니다.</p>
-        <div class="sheet-wrap">
-          <table class="sheet-table holdings-table">
-            <thead>
-              <tr>
-                <th>종목</th>
-                <th class="num">수량</th>
-                <th class="num">평단(원)</th>
-                <th class="num">현재가(원)</th>
-                <th class="num">매수원가</th>
-                <th class="num">평가액</th>
-                <th class="num">평가손익</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      </section>`;
-  }
-
-  grid.innerHTML = sectionsHtml + needHtml + byStockHtml;
+  grid.innerHTML = sectionsHtml + needHtml;
 }
 
 /* ---------- 메인 ---------- */
@@ -1184,31 +1103,6 @@ document.addEventListener("DOMContentLoaded", () => {
     onScroll();
     toTop.addEventListener("click", () => {
       window.scrollTo({ top: 0, behavior: "smooth" });
-    });
-  }
-
-  // 히든 — 제목(📈 관심 대시보드)을 2초 안에 5번 탭하면 '성적표' 섹션을 토글.
-  // 테스트 탭에서만 보이므로, 풀리면 자동으로 테스트 탭으로 이동해 바로 보여줌.
-  const title = document.querySelector(".top h1");
-  if (title) {
-    let taps = 0, timer = null;
-    title.style.cursor = "default";
-    title.addEventListener("click", () => {
-      taps++;
-      clearTimeout(timer);
-      timer = setTimeout(() => { taps = 0; }, 2000);
-      if (taps < 5) return;
-      taps = 0;
-      secretUnlocked = !secretUnlocked;
-      if (secretUnlocked && currentTab !== TEST_TAB && tabOrder.includes(TEST_TAB)) {
-        selectTab(TEST_TAB);
-      } else if (currentTab === TEST_TAB) {
-        renderTest();
-      }
-      title.animate(
-        [{ filter: "brightness(2.2)" }, { filter: "brightness(1)" }],
-        { duration: 450 },
-      );
     });
   }
 });
